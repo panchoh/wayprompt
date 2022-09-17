@@ -530,6 +530,6 @@ const WaylandContext = struct {
 var wayland_context: WaylandContext = .{};
 
 /// Returned pin is owned by context.gpa.
-pub fn run(mode: WaylandContext.Mode) ![]const u8 {
-    return (try wayland_context.run(mode)) orelse error.NoPin;
+pub fn run(mode: WaylandContext.Mode) !?[]const u8 {
+    return (try wayland_context.run(mode));
 }

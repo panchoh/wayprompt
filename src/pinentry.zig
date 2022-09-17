@@ -136,8 +136,13 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
             try writer.writeAll("ERR 83886179 Operation cancelled\n");
             return;
         };
-        defer alloc.free(pin);
-        try writer.print("D {s}\nEND\nOK\n", .{pin});
+        if (pin) |p| {
+            defer alloc.free(p);
+            try writer.print("D {s}\nEND\nOK\n", .{p});
+        } else {
+            // Sending no pin is also a valid response.
+            try writer.writeAll("OK\n");
+        }
 
         // The errormessage must automatically reset after every GETPIN or
         // CONFIRM action.
