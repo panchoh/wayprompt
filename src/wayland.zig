@@ -15,7 +15,7 @@ const zwlr = wayland.client.zwlr;
 const util = @import("util.zig");
 
 const context = &@import("wayprompt.zig").context;
-const pinentry_config = &@import("pinentry.zig").pinentry_config;
+const pinentry_context = &@import("pinentry.zig").pinentry_context;
 
 // TODO figure out size based on text
 const widget_width = 600;
@@ -76,21 +76,21 @@ const Seat = struct {
             .keymap => |ev| {
                 defer os.close(ev.fd);
                 if (ev.format != .xkb_v1) {
-                    abort();
+                    wayland_context.abort();
                     return;
                 }
                 const keymap_str = os.mmap(null, ev.size, os.PROT.READ, os.MAP.PRIVATE, ev.fd, 0) catch {
-                    abort();
+                    wayland_context.abort();
                     return;
                 };
                 defer os.munmap(keymap_str);
-                const keymap = xkb.Keymap.newFromBuffer(xkb_context.?, keymap_str.ptr, keymap_str.len - 1, .text_v1, .no_flags) orelse {
-                    abort();
+                const keymap = xkb.Keymap.newFromBuffer(wayland_context.xkb_context.?, keymap_str.ptr, keymap_str.len - 1, .text_v1, .no_flags) orelse {
+                    wayland_context.abort();
                     return;
                 };
                 defer keymap.unref();
                 const state = xkb.State.new(keymap) orelse {
-                    abort();
+                    wayland_context.abort();
                     return;
                 };
                 defer state.unref();
@@ -109,35 +109,35 @@ const Seat = struct {
                 if (keysym == .NoSymbol) return;
                 switch (@enumToInt(keysym)) {
                     xkb.Keysym.Return => {
-                        loop = false;
+                        wayland_context.loop = false;
                         return;
                     },
                     xkb.Keysym.BackSpace => {
                         // TODO to properly delete inputs, we need a codepoint
                         //      buffer (u21). Probably just copy the one from
                         //      nfm.
-                        surface.?.render() catch abort();
+                        wayland_context.surface.?.render() catch wayland_context.abort();
                         return;
                     },
                     xkb.Keysym.Delete => {
-                        pin = .{ .buffer = undefined, .len = 0 };
-                        surface.?.render() catch abort();
+                        wayland_context.pin = .{ .buffer = undefined, .len = 0 };
+                        wayland_context.surface.?.render() catch wayland_context.abort();
                         return;
                     },
                     xkb.Keysym.Escape => {
-                        abort();
+                        wayland_context.abort();
                         return;
                     },
                     else => {},
                 }
                 {
                     @setRuntimeSafety(true);
-                    const used = self.xkb_state.?.keyGetUtf8(keycode, pin.unusedCapacitySlice());
-                    pin.resize(pin.len + used) catch abort();
+                    const used = self.xkb_state.?.keyGetUtf8(keycode, wayland_context.pin.unusedCapacitySlice());
+                    wayland_context.pin.resize(wayland_context.pin.len + used) catch wayland_context.abort();
                 }
 
                 // We only get keyboard input when a surface exists.
-                surface.?.render() catch abort();
+                wayland_context.surface.?.render() catch wayland_context.abort();
             },
             .enter => {},
             .leave => {},
@@ -154,9 +154,9 @@ const Surface = struct {
     scale: u31 = 1, // TODO we need to bind outputs for this and have a wl_seat listener
 
     pub fn init(self: *Surface) !void {
-        const wl_surface = try compositor.?.createSurface();
+        const wl_surface = try wayland_context.compositor.?.createSurface();
         errdefer wl_surface.destroy();
-        const layer_surface = try layer_shell.?.getLayerSurface(wl_surface, null, .overlay, "wayprompt");
+        const layer_surface = try wayland_context.layer_shell.?.getLayerSurface(wl_surface, null, .overlay, "wayprompt");
         errdefer layer_surface.destroy();
         layer_surface.setListener(*Surface, layerSurfaceListener, self);
         layer_surface.setSize(widget_width, widget_height);
@@ -182,17 +182,17 @@ const Surface = struct {
                 self.configured = true;
                 layer_surface.ackConfigure(ev.serial);
                 self.render() catch {
-                    abort();
+                    wayland_context.abort();
                     return;
                 };
             },
-            .closed => abort(),
+            .closed => wayland_context.abort(),
         }
     }
 
     fn render(self: *Surface) !void {
         if (!self.configured) return;
-        const buffer = (try buffer_pool.nextBuffer(widget_width, widget_height)) orelse return;
+        const buffer = (try wayland_context.buffer_pool.nextBuffer(widget_width, widget_height)) orelse return;
 
         // Background.
         {
@@ -219,7 +219,7 @@ const Surface = struct {
             borderedRectangle(buffer.*.pixman_image.?, pinarea_x, pinarea_y, pinarea_width, pinarea_height, 2, self.scale, &background_colour, &border_colour);
 
             var i: usize = 0;
-            const len = try util.unicodeLen(pin.slice());
+            const len = try util.unicodeLen(wayland_context.pin.slice());
             while (i < len and i < squares) : (i += 1) {
                 const x = @intCast(u31, pinarea_x + i * square_size + (i + 1) * square_padding);
                 const y = pinarea_y + square_padding;
@@ -227,7 +227,7 @@ const Surface = struct {
             }
         }
 
-        switch (mode) {
+        switch (wayland_context.mode) {
             .pinentry_getpin => {},
             .pinentry_confirm => {},
             .pinentry_message => {},
@@ -351,7 +351,7 @@ const Buffer = struct {
         ));
         errdefer os.munmap(data);
 
-        const shm_pool = try shm.?.createPool(fd, size);
+        const shm_pool = try wayland_context.shm.?.createPool(fd, size);
         defer shm_pool.destroy();
 
         const wl_buffer = try shm_pool.createBuffer(0, width, height, stride, .argb8888);
@@ -389,162 +389,147 @@ const Buffer = struct {
     }
 };
 
-const Mode = enum { pinentry_getpin, pinentry_message, pinentry_confirm };
-var mode: Mode = undefined;
+const WaylandContext = struct {
+    const Mode = enum { pinentry_getpin, pinentry_message, pinentry_confirm };
+    mode: Mode = undefined,
 
-// zig-wayland unfortunately does not seem to accept void for user-data pointers.
-const nop: u1 = undefined;
+    layer_shell: ?*zwlr.LayerShellV1 = null,
+    compositor: ?*wl.Compositor = null,
+    shm: ?*wl.Shm = null,
+    xkb_context: ?*xkb.Context = null,
+    seats: std.TailQueue(Seat) = .{},
+    buffer_pool: BufferPool = .{},
+    surface: ?Surface = null, // TODO find out if an optional is really needed here
 
-var layer_shell: ?*zwlr.LayerShellV1 = null;
-var compositor: ?*wl.Compositor = null;
-var shm: ?*wl.Shm = null;
-var xkb_context: ?*xkb.Context = null;
-var seats: std.TailQueue(Seat) = .{};
-var buffer_pool: BufferPool = .{};
-var surface: ?Surface = null;
+    loop: bool = true,
+    missing_wayland_interfaces: bool = false,
+    pin: std.BoundedArray(u8, 1024) = .{ .buffer = undefined, .len = 0 },
 
-var loop: bool = true;
-var missing_wayland_interfaces: bool = false;
-var pin: std.BoundedArray(u8, 1024) = .{ .buffer = undefined };
-
-pub fn run(_mode: Mode) ![]const u8 {
-    mode = _mode;
-
-    // Prepare pin array.
-    pin = .{ .buffer = undefined, .len = 0 };
-    errdefer pin = .{ .buffer = undefined, .len = 0 };
-
-    // TODO figure out surface size based on what text is available and stuff
-
-    const wayland_display = blk: {
-        if (pinentry_config.wayland_display) |wd| break :blk wd;
-        if (os.getenv("WAYLAND_DISPLAY")) |wd| break :blk wd;
-        return error.NoWaylandDisplay;
-    };
-
-    const display = try wl.Display.connect(@ptrCast([*:0]const u8, wayland_display.ptr));
-    defer display.disconnect();
-
-    const registry = try display.getRegistry();
-    defer registry.destroy();
-    registry.setListener(*const u1, registryListener, &nop);
-
-    const sync = try display.sync();
-    defer sync.destroy();
-    sync.setListener(*const u1, syncListener, &nop);
-
-    xkb_context = xkb.Context.new(.no_flags) orelse return error.OutOfMemory;
-
-    defer reset();
-
-    // Per pinentry protocol documentation, the client may not send us anything
-    // while it is waiting for a data response. So it's fine to just jump into
-    // a different event loop here for a short while.
-    while (loop) {
-        if (display.dispatch() != .SUCCESS) return error.DispatchFailed;
-    }
-    if (missing_wayland_interfaces) return error.MissingWaylandInterfaces;
-
-    if (pin.len > 0) {
-        return pin.slice();
-    } else {
-        return error.NoPin;
-    }
-}
-
-/// Clear pin and prepare to exit wayland loop.
-fn abort() void {
-    pin = .{ .buffer = undefined, .len = 0 };
-    loop = false;
-}
-
-/// Cleanup and reset for a possible future run. Does not reset pin, as that
-/// will likely be used at callsite of run().
-fn reset() void {
-    const alloc = context.gpa.allocator();
-    if (surface) |s| {
-        s.deinit();
-        surface = null;
-    }
-    if (layer_shell) |ls| {
-        ls.destroy();
-        layer_shell = null;
-    }
-    if (compositor) |cmp| {
-        cmp.destroy();
-        compositor = null;
-    }
-    if (shm) |sm| {
-        sm.destroy();
-        shm = null;
-    }
-    buffer_pool.reset();
-    var it = seats.first;
-    while (it) |node| {
-        it = node.next;
-        node.data.deinit();
-        alloc.destroy(node);
-    }
-    seats = .{};
-    if (xkb_context) |xc| {
-        xc.unref();
-        xkb_context = null;
-    }
-    missing_wayland_interfaces = false;
-    loop = true;
-    mode = undefined;
-}
-
-fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, _: *const u1) void {
-    switch (event) {
-        .global => |ev| {
-            if (cstr.cmp(ev.interface, zwlr.LayerShellV1.getInterface().name) == 0) {
-                layer_shell = registry.bind(ev.name, zwlr.LayerShellV1, 4) catch {
-                    abort();
-                    return;
-                };
-            } else if (cstr.cmp(ev.interface, wl.Compositor.getInterface().name) == 0) {
-                compositor = registry.bind(ev.name, wl.Compositor, 4) catch {
-                    abort();
-                    return;
-                };
-            } else if (cstr.cmp(ev.interface, wl.Shm.getInterface().name) == 0) {
-                shm = registry.bind(ev.name, wl.Shm, 1) catch {
-                    abort();
-                    return;
-                };
-            } else if (cstr.cmp(ev.interface, wl.Seat.getInterface().name) == 0) {
-                const seat = registry.bind(ev.name, wl.Seat, 1) catch {
-                    abort();
-                    return;
-                };
-                newSeat(seat) catch {
-                    seat.destroy();
-                    abort();
-                };
-            }
-        },
-        .global_remove => {}, // We do not live long enough for this to become relevant.
-    }
-}
-
-fn newSeat(wl_seat: *wl.Seat) !void {
-    const alloc = context.gpa.allocator();
-    const node = try alloc.create(std.TailQueue(Seat).Node);
-    try node.data.init(wl_seat);
-    seats.append(node);
-}
-
-fn syncListener(_: *wl.Callback, _: wl.Callback.Event, _: *const u1) void {
-    if (layer_shell == null or compositor == null or shm == null) {
-        missing_wayland_interfaces = true;
-        abort();
+    pub fn abort(self: *WaylandContext) void {
+        self.pin = .{ .buffer = undefined, .len = 0 };
+        self.loop = false;
     }
 
-    surface = Surface{};
-    surface.?.init() catch {
-        surface = null;
-        abort();
-        return;
-    };
+    pub fn run(self: *WaylandContext, mode: Mode) !?[]const u8 {
+        self.mode = mode;
+
+        const wayland_display = blk: {
+            if (pinentry_context.wayland_display) |wd| break :blk wd;
+            if (os.getenv("WAYLAND_DISPLAY")) |wd| break :blk wd;
+            return error.NoWaylandDisplay;
+        };
+
+        const display = try wl.Display.connect(@ptrCast([*:0]const u8, wayland_display.ptr));
+        defer display.disconnect();
+
+        const registry = try display.getRegistry();
+        defer registry.destroy();
+        registry.setListener(*WaylandContext, registryListener, self);
+
+        const sync = try display.sync();
+        defer sync.destroy();
+        sync.setListener(*WaylandContext, syncListener, self);
+
+        defer self.reset();
+
+        self.xkb_context = xkb.Context.new(.no_flags) orelse return error.OutOfMemory;
+
+        // Per pinentry protocol documentation, the client may not send us anything
+        // while it is waiting for a data response. So it's fine to just jump into
+        // a different event loop here for a short while.
+        while (self.loop) {
+            if (display.dispatch() != .SUCCESS) return error.DispatchFailed;
+        }
+        if (self.missing_wayland_interfaces) return error.MissingWaylandInterfaces;
+
+        if (self.pin.len > 0) {
+            const alloc = context.gpa.allocator();
+            const pin = try alloc.dupe(u8, self.pin.slice());
+            return pin;
+        } else {
+            return null;
+        }
+    }
+
+    fn reset(self: *WaylandContext) void {
+        const alloc = context.gpa.allocator();
+
+        if (self.surface) |s| s.deinit();
+        if (self.layer_shell) |ls| ls.destroy();
+        if (self.compositor) |cmp| cmp.destroy();
+        if (self.shm) |sm| sm.destroy();
+        if (self.xkb_context) |xc| xc.unref();
+
+        self.buffer_pool.reset();
+
+        var it = self.seats.first;
+        while (it) |node| {
+            it = node.next;
+            node.data.deinit();
+            alloc.destroy(node);
+        }
+
+        self.* = .{};
+    }
+
+    fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, self: *WaylandContext) void {
+        switch (event) {
+            .global => |ev| {
+                if (cstr.cmp(ev.interface, zwlr.LayerShellV1.getInterface().name) == 0) {
+                    self.layer_shell = registry.bind(ev.name, zwlr.LayerShellV1, 4) catch {
+                        self.abort();
+                        return;
+                    };
+                } else if (cstr.cmp(ev.interface, wl.Compositor.getInterface().name) == 0) {
+                    self.compositor = registry.bind(ev.name, wl.Compositor, 4) catch {
+                        self.abort();
+                        return;
+                    };
+                } else if (cstr.cmp(ev.interface, wl.Shm.getInterface().name) == 0) {
+                    self.shm = registry.bind(ev.name, wl.Shm, 1) catch {
+                        self.abort();
+                        return;
+                    };
+                } else if (cstr.cmp(ev.interface, wl.Seat.getInterface().name) == 0) {
+                    const seat = registry.bind(ev.name, wl.Seat, 1) catch {
+                        self.abort();
+                        return;
+                    };
+                    self.addSeat(seat) catch {
+                        seat.destroy();
+                        self.abort();
+                    };
+                }
+            },
+            .global_remove => {}, // We do not live long enough for this to become relevant.
+        }
+    }
+
+    fn addSeat(self: *WaylandContext, wl_seat: *wl.Seat) !void {
+        const alloc = context.gpa.allocator();
+        const node = try alloc.create(std.TailQueue(Seat).Node);
+        try node.data.init(wl_seat);
+        self.seats.append(node);
+    }
+
+    fn syncListener(_: *wl.Callback, _: wl.Callback.Event, self: *WaylandContext) void {
+        if (self.layer_shell == null or self.compositor == null or self.shm == null) {
+            self.missing_wayland_interfaces = true;
+            self.abort();
+        }
+
+        self.surface = Surface{};
+        self.surface.?.init() catch {
+            self.surface = null;
+            self.abort();
+            return;
+        };
+    }
+};
+
+var wayland_context: WaylandContext = .{};
+
+/// Returned pin is owned by context.gpa.
+pub fn run(mode: WaylandContext.Mode) ![]const u8 {
+    return (try wayland_context.run(mode)) orelse error.NoPin;
 }

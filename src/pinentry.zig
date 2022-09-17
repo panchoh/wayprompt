@@ -10,7 +10,7 @@ const wayland = @import("wayland.zig");
 
 const context = &@import("wayprompt.zig").context;
 
-const PinentryConfig = struct {
+const PinentryContext = struct {
     title: ?[]const u8 = null,
     prompt: ?[]const u8 = null,
     description: ?[]const u8 = null,
@@ -20,7 +20,7 @@ const PinentryConfig = struct {
     // a bad one. However the gpg-agent will likely send us its own.
     wayland_display: ?[:0]const u8 = null,
 
-    pub fn release(self: *PinentryConfig) void {
+    pub fn reset(self: *PinentryContext) void {
         const alloc = context.gpa.allocator();
         if (self.title) |t| {
             alloc.free(t);
@@ -45,10 +45,10 @@ const PinentryConfig = struct {
     }
 };
 
-pub var pinentry_config: PinentryConfig = .{};
+pub var pinentry_context: PinentryContext = .{};
 
 pub fn main() !u8 {
-    defer pinentry_config.release();
+    defer pinentry_context.reset();
 
     const stdout = io.getStdOut();
     const stdin = io.getStdIn();
@@ -110,20 +110,20 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
     var it = mem.tokenize(u8, line, &ascii.spaces);
     const command = it.next() orelse return;
     if (ascii.eqlIgnoreCase(command, "settitle")) {
-        if (pinentry_config.title) |p| alloc.free(p);
-        if (it.next()) |_| pinentry_config.title = try alloc.dupe(u8, line["settitle".len..]);
+        if (pinentry_context.title) |p| alloc.free(p);
+        if (it.next()) |_| pinentry_context.title = try alloc.dupe(u8, line["settitle".len..]);
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "setprompt")) {
-        if (pinentry_config.prompt) |p| alloc.free(p);
-        if (it.next()) |_| pinentry_config.prompt = try alloc.dupe(u8, line["setprompt".len..]);
+        if (pinentry_context.prompt) |p| alloc.free(p);
+        if (it.next()) |_| pinentry_context.prompt = try alloc.dupe(u8, line["setprompt".len..]);
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "setdesc")) {
-        if (pinentry_config.description) |d| alloc.free(d);
-        if (it.next()) |_| pinentry_config.description = try alloc.dupe(u8, line["setdesc".len..]);
+        if (pinentry_context.description) |d| alloc.free(d);
+        if (it.next()) |_| pinentry_context.description = try alloc.dupe(u8, line["setdesc".len..]);
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "seterror")) {
-        if (pinentry_config.errmessage) |e| alloc.free(e);
-        if (it.next()) |_| pinentry_config.errmessage = try alloc.dupe(u8, line["seterror".len..]);
+        if (pinentry_context.errmessage) |e| alloc.free(e);
+        if (it.next()) |_| pinentry_context.errmessage = try alloc.dupe(u8, line["seterror".len..]);
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "getpin")) {
         const pin = wayland.run(.pinentry_getpin) catch |err| {
@@ -136,13 +136,14 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
             try writer.writeAll("ERR 83886179 Operation cancelled\n");
             return;
         };
+        defer alloc.free(pin);
         try writer.print("D {s}\nEND\nOK\n", .{pin});
 
         // The errormessage must automatically reset after every GETPIN or
         // CONFIRM action.
-        if (pinentry_config.errmessage) |e| {
+        if (pinentry_context.errmessage) |e| {
             alloc.free(e);
-            pinentry_config.errmessage = null;
+            pinentry_context.errmessage = null;
         }
     } else if (ascii.eqlIgnoreCase(command, "confirm")) {
         // TODO XXX Wayland widget
@@ -152,9 +153,9 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
 
         // The errormessage must automatically reset after every GETPIN or
         // CONFIRM action.
-        if (pinentry_config.errmessage) |e| {
+        if (pinentry_context.errmessage) |e| {
             alloc.free(e);
-            pinentry_config.errmessage = null;
+            pinentry_context.errmessage = null;
         }
     } else if (ascii.eqlIgnoreCase(command, "message")) {
         // TODO XXX Wayland widget
@@ -182,9 +183,9 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
         if (it.next()) |option| {
             const option_wayland = "putenv=WAYLAND_DISPLAY=";
             if (mem.startsWith(u8, option, option_wayland)) {
-                if (pinentry_config.wayland_display) |w| alloc.free(w);
-                pinentry_config.wayland_display = try alloc.dupeZ(u8, line["option ".len + option_wayland.len ..]);
-                try writer.print("# {s}\n", .{pinentry_config.wayland_display.?});
+                if (pinentry_context.wayland_display) |w| alloc.free(w);
+                pinentry_context.wayland_display = try alloc.dupeZ(u8, line["option ".len + option_wayland.len ..]);
+                try writer.print("# {s}\n", .{pinentry_context.wayland_display.?});
             }
         }
         // Most options are internationalisation for features we don't offer.
@@ -193,7 +194,7 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
         // unknown ones would be: "ERR 83886254 Unknown option".
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "reset")) {
-        pinentry_config.release();
+        pinentry_context.reset();
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "setkeyinfo")) {
         // This request sets a key identifier to be used for key-caching
