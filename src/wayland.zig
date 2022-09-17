@@ -7,6 +7,7 @@ const fmt = std.fmt;
 const math = std.math;
 
 const pixman = @import("pixman");
+const fcft = @import("fcft");
 const xkb = @import("xkbcommon");
 const wayland = @import("wayland");
 const wl = wayland.client.wl;
@@ -16,10 +17,6 @@ const util = @import("util.zig");
 
 const context = &@import("wayprompt.zig").context;
 const pinentry_context = &@import("pinentry.zig").pinentry_context;
-
-// TODO figure out size based on text
-const widget_width = 600;
-const widget_height = 200;
 
 const Seat = struct {
     wl_seat: *wl.Seat,
@@ -150,6 +147,8 @@ const Surface = struct {
     wl_surface: *wl.Surface = undefined,
     layer_surface: *zwlr.LayerSurfaceV1 = undefined,
     configured: bool = false,
+    width: u31 = undefined,
+    height: u31 = undefined,
 
     scale: u31 = 1, // TODO we need to bind outputs for this and have a wl_seat listener
 
@@ -158,14 +157,28 @@ const Surface = struct {
         errdefer wl_surface.destroy();
         const layer_surface = try wayland_context.layer_shell.?.getLayerSurface(wl_surface, null, .overlay, "wayprompt");
         errdefer layer_surface.destroy();
-        layer_surface.setListener(*Surface, layerSurfaceListener, self);
-        layer_surface.setSize(widget_width, widget_height);
-        layer_surface.setKeyboardInteractivity(.exclusive);
-        wl_surface.commit();
+
         self.* = .{
             .wl_surface = wl_surface,
             .layer_surface = layer_surface,
         };
+        self.calculateSize();
+
+        layer_surface.setListener(*Surface, layerSurfaceListener, self);
+        layer_surface.setKeyboardInteractivity(.exclusive);
+        layer_surface.setSize(self.width, self.height);
+        wl_surface.commit();
+    }
+
+    fn calculateSize(self: *Surface) void {
+        switch (wayland_context.mode) {
+            .pinentry_getpin => {
+                // TODO add extra height for configured text
+                self.width = 600;
+                self.height = 100;
+            },
+            .pinentry_message, .pinentry_confirm => {}, // TODO
+        }
     }
 
     pub fn deinit(self: *const Surface) void {
@@ -192,51 +205,53 @@ const Surface = struct {
 
     fn render(self: *Surface) !void {
         if (!self.configured) return;
-        const buffer = (try wayland_context.buffer_pool.nextBuffer(widget_width, widget_height)) orelse return;
 
-        // Background.
-        {
-            const background_colour = comptime pixmanColourFromRGB("0x666666") catch @compileError("bad colour");
-            const border_colour = comptime pixmanColourFromRGB("0x333333") catch @compileError("bad colour");
-            borderedRectangle(buffer.*.pixman_image.?, 0, 0, widget_width, widget_height, 2, self.scale, &background_colour, &border_colour);
-        }
-
-        // Pin area.
-        {
-            const squares = 15;
-            const square_size = 20;
-            const square_padding = 10;
-            const square_halfpadding = @divExact(square_padding, 2);
-            const pinarea_height = square_size + 2 * square_padding;
-            const pinarea_width = squares * (square_size + 2 * square_halfpadding) + 2 * square_halfpadding;
-            const pinarea_x = @divExact(widget_width, 2) - @divExact(pinarea_width, 2);
-            const pinarea_y = 40;
-
-            const background_colour = comptime pixmanColourFromRGB("0x999999") catch @compileError("bad colour");
-            const border_colour = comptime pixmanColourFromRGB("0x7F7F7F") catch @compileError("bad colour");
-            const square_colour = comptime pixmanColourFromRGB("0xCCCCCC") catch @compileError("bad colour");
-
-            borderedRectangle(buffer.*.pixman_image.?, pinarea_x, pinarea_y, pinarea_width, pinarea_height, 2, self.scale, &background_colour, &border_colour);
-
-            var i: usize = 0;
-            const len = try util.unicodeLen(wayland_context.pin.slice());
-            while (i < len and i < squares) : (i += 1) {
-                const x = @intCast(u31, pinarea_x + i * square_size + (i + 1) * square_padding);
-                const y = pinarea_y + square_padding;
-                borderedRectangle(buffer.*.pixman_image.?, x, y, square_size, square_size, 1, self.scale, &square_colour, &border_colour);
-            }
-        }
+        const buffer = (try wayland_context.buffer_pool.nextBuffer(self.width, self.height)) orelse return;
+        const image = buffer.*.pixman_image.?;
 
         switch (wayland_context.mode) {
-            .pinentry_getpin => {},
-            .pinentry_confirm => {},
-            .pinentry_message => {},
+            .pinentry_getpin => {
+                // TODO draw text, adjust y position of widgets accordingly.
+                self.drawBackground(image, self.width, self.height);
+                self.drawPinarea(image, 16, try util.unicodeLen(wayland_context.pin.slice()), @divFloor(self.height, 2) - 20);
+            },
+            .pinentry_confirm, .pinentry_message => {},
         }
+
         self.wl_surface.setBufferScale(self.scale);
         self.wl_surface.attach(buffer.*.wl_buffer.?, 0, 0);
-        self.wl_surface.damageBuffer(0, 0, widget_width, widget_height);
+        self.wl_surface.damageBuffer(0, 0, math.maxInt(i31), math.maxInt(u31));
         self.wl_surface.commit();
         buffer.*.busy = true;
+    }
+
+    fn drawBackground(self: *Surface, image: *pixman.Image, width: u31, height: u31) void {
+        const background_colour = comptime pixmanColourFromRGB("0x666666") catch @compileError("bad colour");
+        const border_colour = comptime pixmanColourFromRGB("0x333333") catch @compileError("bad colour");
+        borderedRectangle(image, 0, 0, width, height, 2, self.scale, &background_colour, &border_colour);
+    }
+
+    fn drawPinarea(self: *Surface, image: *pixman.Image, capacity: u31, len: usize, pinarea_y: u31) void {
+        // TODO if capacity would overflow, reduce it
+        const square_size = 20;
+        const square_padding = 10;
+        const square_halfpadding = @divExact(square_padding, 2);
+        const pinarea_height = square_size + 2 * square_padding;
+        const pinarea_width = capacity * (square_size + 2 * square_halfpadding) + 2 * square_halfpadding;
+        const pinarea_x = @divFloor(self.width, 2) - @divFloor(pinarea_width, 2);
+
+        const background_colour = comptime pixmanColourFromRGB("0x999999") catch @compileError("bad colour");
+        const border_colour = comptime pixmanColourFromRGB("0x7F7F7F") catch @compileError("bad colour");
+        const square_colour = comptime pixmanColourFromRGB("0xCCCCCC") catch @compileError("bad colour");
+
+        borderedRectangle(image, pinarea_x, pinarea_y, pinarea_width, pinarea_height, 2, self.scale, &background_colour, &border_colour);
+
+        var i: usize = 0;
+        while (i < len and i < capacity) : (i += 1) {
+            const x = @intCast(u31, pinarea_x + i * square_size + (i + 1) * square_padding);
+            const y = pinarea_y + square_padding;
+            borderedRectangle(image, x, y, square_size, square_size, 1, self.scale, &square_colour, &border_colour);
+        }
     }
 
     // Copied and adapted from https://git.sr.ht/~novakane/zelbar, same license.
@@ -399,7 +414,8 @@ const WaylandContext = struct {
     xkb_context: ?*xkb.Context = null,
     seats: std.TailQueue(Seat) = .{},
     buffer_pool: BufferPool = .{},
-    surface: ?Surface = null, // TODO find out if an optional is really needed here
+    surface: ?Surface = null,
+    fonts: ?*fcft.Font = null,
 
     loop: bool = true,
     missing_wayland_interfaces: bool = false,
@@ -412,6 +428,13 @@ const WaylandContext = struct {
 
     pub fn run(self: *WaylandContext, mode: Mode) !?[]const u8 {
         self.mode = mode;
+
+        _ = fcft.init(.never, false, .none);
+        defer fcft.fini();
+
+        var fonts = [_][*:0]const u8{ "sans", "mono" };
+        self.fonts = try fcft.Font.fromName(fonts[0..], null);
+        errdefer self.fonts.?.destroy();
 
         const wayland_display = blk: {
             if (pinentry_context.wayland_display) |wd| break :blk wd;
@@ -459,6 +482,7 @@ const WaylandContext = struct {
         if (self.compositor) |cmp| cmp.destroy();
         if (self.shm) |sm| sm.destroy();
         if (self.xkb_context) |xc| xc.unref();
+        if (self.fonts) |f| f.destroy();
 
         self.buffer_pool.reset();
 

@@ -29,6 +29,9 @@ pub fn build(b: *zbs.Builder) !void {
     wayprompt.addPackagePath("pixman", "deps/zig-pixman/pixman.zig");
     wayprompt.linkSystemLibrary("pixman-1");
 
+    wayprompt.addPackagePath("fcft", "deps/zig-fcft/fcft.zig");
+    wayprompt.linkSystemLibrary("fcft");
+
     wayprompt.addPackagePath("xkbcommon", "deps/zig-xkbcommon/src/xkbcommon.zig");
     wayprompt.linkSystemLibrary("xkbcommon");
 

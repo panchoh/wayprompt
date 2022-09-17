@@ -126,6 +126,9 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
         if (it.next()) |_| pinentry_context.errmessage = try alloc.dupe(u8, line["seterror".len..]);
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "getpin")) {
+        // TODO it's possible that the gpg-apgent requests us to ask for the
+        //      pin twice (f.e. when the user creates a new one, I imagine).
+        //      This needs support in the UI.
         const pin = wayland.run(.pinentry_getpin) catch |err| {
             // The client will ignore all messages starting with #, however they
             // should still be logged by the gpg-agent, given that the right
