@@ -5,6 +5,7 @@ const cstr = std.cstr;
 const mem = std.mem;
 const fmt = std.fmt;
 const math = std.math;
+const unicode = std.unicode;
 
 const pixman = @import("pixman");
 const fcft = @import("fcft");
@@ -17,6 +18,149 @@ const util = @import("util.zig");
 
 const context = &@import("wayprompt.zig").context;
 const pinentry_context = &@import("pinentry.zig").pinentry_context;
+
+const widget_padding = 10;
+
+// Copied and adapted from https://git.sr.ht/~novakane/zelbar, same license.
+const TextView = struct {
+    const Mode = union(enum) {
+        text_run: *const fcft.TextRun,
+        glyphs: struct {
+            glyphs: []*const fcft.Glyph,
+            kerns: []c_long,
+        },
+    };
+    mode: Mode,
+    font: *fcft.Font,
+    width: u31,
+    len: usize,
+
+    // TODO auto-infer height based on font.height and amount of linebreaks in text
+
+    pub fn new(str: []const u8, font: *fcft.Font) !TextView {
+        const alloc = context.gpa.allocator();
+        const len = try unicode.utf8CountCodepoints(str);
+        const codepoints = try alloc.alloc(u32, len);
+        errdefer alloc.free(codepoints);
+        {
+            var i: usize = 0;
+            var it = (try unicode.Utf8View.init(str)).iterator();
+            while (it.nextCodepoint()) |cp| : (i += 1) codepoints[i] = cp;
+        }
+
+        if ((fcft.capabilities() & fcft.Capabilities.text_run_shaping) != 0) {
+            const text_run = try font.rasterizeTextRunUtf32(codepoints, .none);
+            var width: u31 = 0;
+            var i: usize = 0;
+            while (i < text_run.count) : (i += 1) {
+                width += @intCast(u31, text_run.glyphs[i].advance.x);
+            }
+
+            return TextView{
+                .mode = .{ .text_run = text_run },
+                .font = font,
+                .width = width,
+                .len = codepoints.len,
+            };
+        } else {
+            const glyphs = try alloc.alloc(*const fcft.Glyph, codepoints.len);
+            errdefer alloc.free(glyphs);
+            const kerns = try alloc.alloc(c_long, codepoints.len);
+            errdefer alloc.free(kerns);
+
+            var i: usize = 0;
+            var width: u31 = 0;
+            while (i < codepoints.len) : (i += 1) {
+                glyphs[i] = try font.rasterizeCharUtf32(codepoints[i], .none);
+                kerns[i] = 0;
+                if (i > 0) {
+                    var x_kern: c_long = 0;
+                    if (font.kerning(codepoints[i - 1], codepoints[i], &x_kern, null)) kerns[i] = x_kern;
+                }
+                width += @intCast(u31, kerns[i] + glyphs[i].advance.x);
+            }
+
+            return TextView{
+                .mode = .{ .glyphs = .{
+                    .glyphs = glyphs,
+                    .kerns = kerns,
+                } },
+                .font = font,
+                .width = width,
+                .len = codepoints.len,
+            };
+        }
+    }
+
+    pub fn deinit(self: *const TextView) void {
+        switch (self.*.mode) {
+            .text_run => self.mode.text_run.destroy(),
+            .glyphs => {
+                const alloc = context.gpa.allocator();
+                alloc.free(self.mode.glyphs.glyphs);
+                alloc.free(self.mode.glyphs.kerns);
+            },
+        }
+    }
+
+    pub fn draw(self: *const TextView, image: *pixman.Image, x: u31, y: u31) !void {
+        const text_colour = comptime pixmanColourFromRGB("0xffffff") catch @compileError("bad colour");
+
+        const glyphs = switch (self.mode) {
+            .text_run => self.mode.text_run.glyphs[0..self.len],
+            .glyphs => self.mode.glyphs.glyphs,
+        };
+
+        var X: u31 = x;
+        var i: usize = 0;
+        while (i < self.len) : (i += 1) {
+            if (self.mode == .glyphs) X += @intCast(u31, self.mode.glyphs.kerns[i]);
+
+            switch (pixman.Image.getFormat(glyphs[i].pix)) {
+                // Pre-rendered Image.
+                .a8r8g8b8 => pixman.Image.composite32(
+                    .over,
+                    glyphs[i].pix,
+                    null,
+                    image,
+                    0,
+                    0,
+                    0,
+                    0,
+                    X + @intCast(u31, glyphs[i].x),
+                    y - @intCast(i32, glyphs[i].y) + self.font.ascent,
+                    glyphs[i].width,
+                    glyphs[i].height,
+                ),
+
+                // Alpha mask (i.e. regular character).
+                else => {
+                    // TODO: this probably allocs memory, so investigate replacement.
+                    // TODO: do we need to recreate this for every char?
+                    const c = pixman.Image.createSolidFill(&text_colour).?;
+                    defer _ = c.unref();
+
+                    pixman.Image.composite32(
+                        .over,
+                        c,
+                        glyphs[i].pix,
+                        image,
+                        0,
+                        0,
+                        0,
+                        0,
+                        X + @intCast(i32, glyphs[i].x),
+                        y - @intCast(i32, glyphs[i].y) + self.font.ascent,
+                        glyphs[i].width,
+                        glyphs[i].height,
+                    );
+                },
+            }
+
+            X += @intCast(u31, glyphs[i].advance.x);
+        }
+    }
+};
 
 const Seat = struct {
     wl_seat: *wl.Seat,
@@ -175,7 +319,11 @@ const Surface = struct {
             .pinentry_getpin => {
                 // TODO add extra height for configured text
                 self.width = 600;
-                self.height = 100;
+                self.height = 40 + 2 * widget_padding; // TODO don't hardcode pinarea height
+                if (wayland_context.title) |title| self.height += @intCast(u31, title.font.height) + widget_padding;
+                if (wayland_context.description) |description| self.height += @intCast(u31, description.font.height) + widget_padding;
+                if (wayland_context.prompt) |prompt| self.height += @intCast(u31, prompt.font.height) + widget_padding;
+                if (wayland_context.errmessage) |errmessage| self.height += @intCast(u31, errmessage.font.height) + widget_padding;
             },
             .pinentry_message, .pinentry_confirm => {}, // TODO
         }
@@ -213,7 +361,25 @@ const Surface = struct {
             .pinentry_getpin => {
                 // TODO draw text, adjust y position of widgets accordingly.
                 self.drawBackground(image, self.width, self.height);
-                self.drawPinarea(image, 16, try util.unicodeLen(wayland_context.pin.slice()), @divFloor(self.height, 2) - 20);
+                var Y: u31 = widget_padding;
+                if (wayland_context.title) |title| {
+                    try title.draw(image, widget_padding, Y);
+                    Y += @intCast(u31, title.font.height) + widget_padding;
+                }
+                if (wayland_context.description) |description| {
+                    try description.draw(image, widget_padding, Y);
+                    Y += @intCast(u31, description.font.height) + widget_padding;
+                }
+                if (wayland_context.prompt) |prompt| {
+                    try prompt.draw(image, widget_padding, Y);
+                    Y += @intCast(u31, prompt.font.height) + widget_padding;
+                }
+                self.drawPinarea(image, 16, try util.unicodeLen(wayland_context.pin.slice()), Y);
+                Y += 40 + widget_padding; // TODO do not hardcode pinarea size;
+                if (wayland_context.errmessage) |errmessage| {
+                    try errmessage.draw(image, widget_padding, Y);
+                    Y += @intCast(u31, errmessage.font.height) + widget_padding;
+                }
             },
             .pinentry_confirm, .pinentry_message => {},
         }
@@ -234,7 +400,7 @@ const Surface = struct {
     fn drawPinarea(self: *Surface, image: *pixman.Image, capacity: u31, len: usize, pinarea_y: u31) void {
         // TODO if capacity would overflow, reduce it
         const square_size = 20;
-        const square_padding = 10;
+        const square_padding = @divExact(square_size, 2);
         const square_halfpadding = @divExact(square_padding, 2);
         const pinarea_height = square_size + 2 * square_padding;
         const pinarea_width = capacity * (square_size + 2 * square_halfpadding) + 2 * square_halfpadding;
@@ -252,32 +418,6 @@ const Surface = struct {
             const y = pinarea_y + square_padding;
             borderedRectangle(image, x, y, square_size, square_size, 1, self.scale, &square_colour, &border_colour);
         }
-    }
-
-    // Copied and adapted from https://git.sr.ht/~novakane/zelbar, same license.
-    fn pixmanColourFromRGB(descr: []const u8) !pixman.Color {
-        if (descr.len != "0xRRGGBB".len) return error.BadColour;
-        if (descr[0] != '0' or descr[1] != 'x') return error.BadColour;
-
-        var color = try fmt.parseUnsigned(u32, descr[2..], 16);
-        if (descr.len == 8) {
-            color <<= 8;
-            color |= 0xff;
-        }
-
-        const bytes = @bitCast([4]u8, color);
-
-        const r: u16 = bytes[3];
-        const g: u16 = bytes[2];
-        const b: u16 = bytes[1];
-        const a: u16 = bytes[0];
-
-        return pixman.Color{
-            .red = @as(u16, r << math.log2(0x101)) + r,
-            .green = @as(u16, g << math.log2(0x101)) + g,
-            .blue = @as(u16, b << math.log2(0x101)) + b,
-            .alpha = @as(u16, a << math.log2(0x101)) + a,
-        };
     }
 
     fn borderedRectangle(
@@ -408,6 +548,11 @@ const WaylandContext = struct {
     const Mode = enum { pinentry_getpin, pinentry_message, pinentry_confirm };
     mode: Mode = undefined,
 
+    title: ?TextView = null,
+    description: ?TextView = null,
+    prompt: ?TextView = null,
+    errmessage: ?TextView = null,
+
     layer_shell: ?*zwlr.LayerShellV1 = null,
     compositor: ?*wl.Compositor = null,
     shm: ?*wl.Shm = null,
@@ -415,7 +560,8 @@ const WaylandContext = struct {
     seats: std.TailQueue(Seat) = .{},
     buffer_pool: BufferPool = .{},
     surface: ?Surface = null,
-    fonts: ?*fcft.Font = null,
+    font_regular: ?*fcft.Font = null,
+    font_large: ?*fcft.Font = null,
 
     loop: bool = true,
     missing_wayland_interfaces: bool = false,
@@ -432,9 +578,14 @@ const WaylandContext = struct {
         _ = fcft.init(.never, false, .none);
         defer fcft.fini();
 
-        var fonts = [_][*:0]const u8{ "sans", "mono" };
-        self.fonts = try fcft.Font.fromName(fonts[0..], null);
-        errdefer self.fonts.?.destroy();
+        // TODO this errdefer probably messes with destruction order
+        var font_regular = [_][*:0]const u8{ "sans:size=14", "mono:size=14" };
+        self.font_regular = try fcft.Font.fromName(font_regular[0..], null);
+        errdefer self.font_regular.?.destroy();
+
+        var font_large = [_][*:0]const u8{ "sans:size=20", "mono:size=20" };
+        self.font_large = try fcft.Font.fromName(font_large[0..], null);
+        errdefer self.font_large.?.destroy();
 
         const wayland_display = blk: {
             if (pinentry_context.wayland_display) |wd| break :blk wd;
@@ -454,6 +605,11 @@ const WaylandContext = struct {
         sync.setListener(*WaylandContext, syncListener, self);
 
         defer self.reset();
+
+        if (pinentry_context.title) |title| self.title = try TextView.new(title, self.font_large.?);
+        if (pinentry_context.description) |description| self.description = try TextView.new(description, self.font_regular.?);
+        if (pinentry_context.prompt) |prompt| self.prompt = try TextView.new(prompt, self.font_large.?);
+        if (pinentry_context.errmessage) |errmessage| self.errmessage = try TextView.new(errmessage, self.font_regular.?);
 
         self.xkb_context = xkb.Context.new(.no_flags) orelse return error.OutOfMemory;
 
@@ -482,7 +638,12 @@ const WaylandContext = struct {
         if (self.compositor) |cmp| cmp.destroy();
         if (self.shm) |sm| sm.destroy();
         if (self.xkb_context) |xc| xc.unref();
-        if (self.fonts) |f| f.destroy();
+        if (self.title) |title| title.deinit();
+        if (self.description) |description| description.deinit();
+        if (self.prompt) |prompt| prompt.deinit();
+        if (self.errmessage) |errmessage| errmessage.deinit();
+        if (self.font_regular) |f| f.destroy();
+        if (self.font_large) |f| f.destroy();
 
         self.buffer_pool.reset();
 
@@ -556,4 +717,30 @@ var wayland_context: WaylandContext = .{};
 /// Returned pin is owned by context.gpa.
 pub fn run(mode: WaylandContext.Mode) !?[]const u8 {
     return (try wayland_context.run(mode));
+}
+
+// Copied and adapted from https://git.sr.ht/~novakane/zelbar, same license.
+fn pixmanColourFromRGB(descr: []const u8) !pixman.Color {
+    if (descr.len != "0xRRGGBB".len) return error.BadColour;
+    if (descr[0] != '0' or descr[1] != 'x') return error.BadColour;
+
+    var color = try fmt.parseUnsigned(u32, descr[2..], 16);
+    if (descr.len == 8) {
+        color <<= 8;
+        color |= 0xff;
+    }
+
+    const bytes = @bitCast([4]u8, color);
+
+    const r: u16 = bytes[3];
+    const g: u16 = bytes[2];
+    const b: u16 = bytes[1];
+    const a: u16 = bytes[0];
+
+    return pixman.Color{
+        .red = @as(u16, r << math.log2(0x101)) + r,
+        .green = @as(u16, g << math.log2(0x101)) + g,
+        .blue = @as(u16, b << math.log2(0x101)) + b,
+        .alpha = @as(u16, a << math.log2(0x101)) + a,
+    };
 }

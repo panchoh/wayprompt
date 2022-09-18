@@ -75,7 +75,9 @@ pub fn main() !u8 {
     while (context.loop) {
         _ = try os.poll(&fds, -1);
         const read = try stdin.read(&in_buffer);
-        try parseInput(out_buffer.writer(), in_buffer[0..read]);
+        // Behold: We also read '\n', so let's get rid of that here handily by
+        // just not including it in the slice.
+        try parseInput(out_buffer.writer(), in_buffer[0 .. read - 1]);
         try out_buffer.flush();
     }
 

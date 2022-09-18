@@ -26,10 +26,19 @@ pub fn build(b: *zbs.Builder) !void {
     wayprompt.setBuildMode(mode);
     wayprompt.addOptions("build_options", options);
 
-    wayprompt.addPackagePath("pixman", "deps/zig-pixman/pixman.zig");
+    const pixman = std.build.Pkg{
+        .name = "pixman",
+        .path = .{ .path = "deps/zig-pixman/pixman.zig" },
+    };
+    wayprompt.addPackage(pixman);
     wayprompt.linkSystemLibrary("pixman-1");
 
-    wayprompt.addPackagePath("fcft", "deps/zig-fcft/fcft.zig");
+    const fcft = std.build.Pkg{
+        .name = "fcft",
+        .path = .{ .path = "deps/zig-fcft/fcft.zig" },
+        .dependencies = &[_]std.build.Pkg{pixman},
+    };
+    wayprompt.addPackage(fcft);
     wayprompt.linkSystemLibrary("fcft");
 
     wayprompt.addPackagePath("xkbcommon", "deps/zig-xkbcommon/src/xkbcommon.zig");
