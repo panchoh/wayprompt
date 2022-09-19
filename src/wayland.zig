@@ -33,11 +33,12 @@ const TextView = struct {
     mode: Mode,
     font: *fcft.Font,
     width: u31,
+    height: u31,
     len: usize,
 
-    // TODO auto-infer height based on font.height and amount of linebreaks in text
-
     pub fn new(str: []const u8, font: *fcft.Font) !TextView {
+        var height = @intCast(u31, font.height);
+
         const alloc = context.gpa.allocator();
         const len = try unicode.utf8CountCodepoints(str);
         const codepoints = try alloc.alloc(u32, len);
@@ -45,7 +46,10 @@ const TextView = struct {
         {
             var i: usize = 0;
             var it = (try unicode.Utf8View.init(str)).iterator();
-            while (it.nextCodepoint()) |cp| : (i += 1) codepoints[i] = cp;
+            while (it.nextCodepoint()) |cp| : (i += 1) {
+                if (cp == '\n') height += @intCast(u31, font.height);
+                codepoints[i] = cp;
+            }
         }
 
         if ((fcft.capabilities() & fcft.Capabilities.text_run_shaping) != 0) {
@@ -60,6 +64,7 @@ const TextView = struct {
                 .mode = .{ .text_run = text_run },
                 .font = font,
                 .width = width,
+                .height = height,
                 .len = codepoints.len,
             };
         } else {
@@ -87,6 +92,7 @@ const TextView = struct {
                 } },
                 .font = font,
                 .width = width,
+                .height = height,
                 .len = codepoints.len,
             };
         }
@@ -103,7 +109,7 @@ const TextView = struct {
         }
     }
 
-    pub fn draw(self: *const TextView, image: *pixman.Image, x: u31, y: u31) !void {
+    pub fn draw(self: *const TextView, image: *pixman.Image, x: u31, y: u31) !u31 {
         const text_colour = comptime pixmanColourFromRGB("0xffffff") catch @compileError("bad colour");
 
         const glyphs = switch (self.mode) {
@@ -112,9 +118,16 @@ const TextView = struct {
         };
 
         var X: u31 = x;
+        var Y: u31 = y;
         var i: usize = 0;
         while (i < self.len) : (i += 1) {
             if (self.mode == .glyphs) X += @intCast(u31, self.mode.glyphs.kerns[i]);
+
+            if (glyphs[i].cp == '\n') {
+                X = x;
+                Y += @intCast(u31, self.font.height);
+                continue;
+            }
 
             switch (pixman.Image.getFormat(glyphs[i].pix)) {
                 // Pre-rendered Image.
@@ -128,7 +141,7 @@ const TextView = struct {
                     0,
                     0,
                     X + @intCast(u31, glyphs[i].x),
-                    y - @intCast(i32, glyphs[i].y) + self.font.ascent,
+                    Y - @intCast(i32, glyphs[i].y) + self.font.ascent,
                     glyphs[i].width,
                     glyphs[i].height,
                 ),
@@ -150,7 +163,7 @@ const TextView = struct {
                         0,
                         0,
                         X + @intCast(i32, glyphs[i].x),
-                        y - @intCast(i32, glyphs[i].y) + self.font.ascent,
+                        Y - @intCast(i32, glyphs[i].y) + self.font.ascent,
                         glyphs[i].width,
                         glyphs[i].height,
                     );
@@ -159,6 +172,8 @@ const TextView = struct {
 
             X += @intCast(u31, glyphs[i].advance.x);
         }
+
+        return self.height + widget_padding;
     }
 };
 
@@ -320,10 +335,10 @@ const Surface = struct {
                 // TODO add extra height for configured text
                 self.width = 600;
                 self.height = 40 + 2 * widget_padding; // TODO don't hardcode pinarea height
-                if (wayland_context.title) |title| self.height += @intCast(u31, title.font.height) + widget_padding;
-                if (wayland_context.description) |description| self.height += @intCast(u31, description.font.height) + widget_padding;
-                if (wayland_context.prompt) |prompt| self.height += @intCast(u31, prompt.font.height) + widget_padding;
-                if (wayland_context.errmessage) |errmessage| self.height += @intCast(u31, errmessage.font.height) + widget_padding;
+                if (wayland_context.title) |title| self.height += title.height + widget_padding;
+                if (wayland_context.description) |description| self.height += description.height + widget_padding;
+                if (wayland_context.prompt) |prompt| self.height += prompt.height + widget_padding;
+                if (wayland_context.errmessage) |errmessage| self.height += errmessage.height + widget_padding;
             },
             .pinentry_message, .pinentry_confirm => {}, // TODO
         }
@@ -362,24 +377,12 @@ const Surface = struct {
                 // TODO draw text, adjust y position of widgets accordingly.
                 self.drawBackground(image, self.width, self.height);
                 var Y: u31 = widget_padding;
-                if (wayland_context.title) |title| {
-                    try title.draw(image, widget_padding, Y);
-                    Y += @intCast(u31, title.font.height) + widget_padding;
-                }
-                if (wayland_context.description) |description| {
-                    try description.draw(image, widget_padding, Y);
-                    Y += @intCast(u31, description.font.height) + widget_padding;
-                }
-                if (wayland_context.prompt) |prompt| {
-                    try prompt.draw(image, widget_padding, Y);
-                    Y += @intCast(u31, prompt.font.height) + widget_padding;
-                }
+                if (wayland_context.title) |title| Y += try title.draw(image, widget_padding, Y);
+                if (wayland_context.description) |description| Y += try description.draw(image, widget_padding, Y);
+                if (wayland_context.prompt) |prompt| Y += try prompt.draw(image, widget_padding, Y);
                 self.drawPinarea(image, 16, try util.unicodeLen(wayland_context.pin.slice()), Y);
                 Y += 40 + widget_padding; // TODO do not hardcode pinarea size;
-                if (wayland_context.errmessage) |errmessage| {
-                    try errmessage.draw(image, widget_padding, Y);
-                    Y += @intCast(u31, errmessage.font.height) + widget_padding;
-                }
+                if (wayland_context.errmessage) |errmessage| Y += try errmessage.draw(image, widget_padding, Y);
             },
             .pinentry_confirm, .pinentry_message => {},
         }

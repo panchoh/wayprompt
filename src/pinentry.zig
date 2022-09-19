@@ -264,7 +264,7 @@ fn pinentryDupe(str: []const u8) ![]const u8 {
 
     var len: usize = str.len;
     for (str) |ch| {
-        if (ch == '%') len -= "%0A".len;
+        if (ch == '%') len -= 2;
     }
 
     const dupe = try alloc.alloc(u8, len);
