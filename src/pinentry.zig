@@ -114,19 +114,19 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
     const command = it.next() orelse return;
     if (ascii.eqlIgnoreCase(command, "settitle")) {
         if (pinentry_context.title) |p| alloc.free(p);
-        if (it.next()) |_| pinentry_context.title = try pinentryDupe(line["settitle".len..]);
+        if (it.next()) |_| pinentry_context.title = try pinentryDupe(line["settitle ".len..]);
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "setprompt")) {
         if (pinentry_context.prompt) |p| alloc.free(p);
-        if (it.next()) |_| pinentry_context.prompt = try pinentryDupe(line["setprompt".len..]);
+        if (it.next()) |_| pinentry_context.prompt = try pinentryDupe(line["setprompt ".len..]);
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "setdesc")) {
         if (pinentry_context.description) |d| alloc.free(d);
-        if (it.next()) |_| pinentry_context.description = try pinentryDupe(line["setdesc".len..]);
+        if (it.next()) |_| pinentry_context.description = try pinentryDupe(line["setdesc ".len..]);
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "seterror")) {
         if (pinentry_context.errmessage) |e| alloc.free(e);
-        if (it.next()) |_| pinentry_context.errmessage = try pinentryDupe(line["seterror".len..]);
+        if (it.next()) |_| pinentry_context.errmessage = try pinentryDupe(line["seterror ".len..]);
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "getpin")) {
         // TODO it's possible that the gpg-apgent requests us to ask for the
