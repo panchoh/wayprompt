@@ -5,6 +5,7 @@ const mem = std.mem;
 const os = std.os;
 const io = std.io;
 const fs = std.fs;
+const fmt = std.fmt;
 
 const wayland = @import("wayland.zig");
 
@@ -113,19 +114,19 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
     const command = it.next() orelse return;
     if (ascii.eqlIgnoreCase(command, "settitle")) {
         if (pinentry_context.title) |p| alloc.free(p);
-        if (it.next()) |_| pinentry_context.title = try alloc.dupe(u8, line["settitle".len..]);
+        if (it.next()) |_| pinentry_context.title = try pinentryDupe(line["settitle".len..]);
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "setprompt")) {
         if (pinentry_context.prompt) |p| alloc.free(p);
-        if (it.next()) |_| pinentry_context.prompt = try alloc.dupe(u8, line["setprompt".len..]);
+        if (it.next()) |_| pinentry_context.prompt = try pinentryDupe(line["setprompt".len..]);
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "setdesc")) {
         if (pinentry_context.description) |d| alloc.free(d);
-        if (it.next()) |_| pinentry_context.description = try alloc.dupe(u8, line["setdesc".len..]);
+        if (it.next()) |_| pinentry_context.description = try pinentryDupe(line["setdesc".len..]);
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "seterror")) {
         if (pinentry_context.errmessage) |e| alloc.free(e);
-        if (it.next()) |_| pinentry_context.errmessage = try alloc.dupe(u8, line["seterror".len..]);
+        if (it.next()) |_| pinentry_context.errmessage = try pinentryDupe(line["seterror".len..]);
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "getpin")) {
         // TODO it's possible that the gpg-apgent requests us to ask for the
@@ -255,4 +256,33 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
     } else {
         try writer.writeAll("ERR 536871187 Unknown IPC command\n");
     }
+}
+
+/// Some characters are escaped in assuan messages.
+fn pinentryDupe(str: []const u8) ![]const u8 {
+    const alloc = context.gpa.allocator();
+
+    var len: usize = str.len;
+    for (str) |ch| {
+        if (ch == '%') len -= "%0A".len;
+    }
+
+    const dupe = try alloc.alloc(u8, len);
+    errdefer alloc.free(dupe);
+
+    var i: usize = 0;
+    var j: usize = 0;
+    while (i < str.len and j < dupe.len) {
+        if (str[i] == '%') {
+            if (str.len < i + 3) return error.BadInput;
+            dupe[j] = try fmt.parseInt(u8, str[i + 1 .. i + 3], 16);
+            i += 3;
+        } else {
+            dupe[j] = str[i];
+            i += 1;
+        }
+        j += 1;
+    }
+
+    return dupe;
 }
