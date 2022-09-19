@@ -6,6 +6,7 @@ const mem = std.mem;
 const fmt = std.fmt;
 const math = std.math;
 const unicode = std.unicode;
+const debug = std.debug;
 
 const pixman = @import("pixman");
 const fcft = @import("fcft");
@@ -42,7 +43,7 @@ const TextView = struct {
         const alloc = context.gpa.allocator();
         const len = try unicode.utf8CountCodepoints(str);
         const codepoints = try alloc.alloc(u32, len);
-        errdefer alloc.free(codepoints);
+        defer alloc.free(codepoints);
         {
             var i: usize = 0;
             var it = (try unicode.Utf8View.init(str)).iterator();
@@ -116,13 +117,15 @@ const TextView = struct {
             .text_run => self.mode.text_run.glyphs[0..self.len],
             .glyphs => self.mode.glyphs.glyphs,
         };
+        debug.assert(glyphs.len == self.len);
 
         var X: u31 = x;
         var Y: u31 = y;
         var i: usize = 0;
-        while (i < self.len) : (i += 1) {
+        while (i < glyphs.len) : (i += 1) {
             if (self.mode == .glyphs) X += @intCast(u31, self.mode.glyphs.kerns[i]);
 
+            debug.print(">> i = {}\n", .{i});
             if (glyphs[i].cp == '\n') {
                 X = x;
                 Y += @intCast(u31, self.font.height);
@@ -240,7 +243,7 @@ const Seat = struct {
                     return;
                 };
                 defer os.munmap(keymap_str);
-                const keymap = xkb.Keymap.newFromBuffer(wayland_context.xkb_context.?, keymap_str.ptr, keymap_str.len - 1, .text_v1, .no_flags) orelse {
+                const keymap = xkb.Keymap.newFromBuffer(wayland_context.xkb_context, keymap_str.ptr, keymap_str.len - 1, .text_v1, .no_flags) orelse {
                     wayland_context.abort();
                     return;
                 };
@@ -269,6 +272,7 @@ const Seat = struct {
                         return;
                     },
                     xkb.Keysym.BackSpace => {
+                        if (!wayland_context.readingInput()) return;
                         // TODO to properly delete inputs, we need a codepoint
                         //      buffer (u21). Probably just copy the one from
                         //      nfm.
@@ -276,6 +280,7 @@ const Seat = struct {
                         return;
                     },
                     xkb.Keysym.Delete => {
+                        if (!wayland_context.readingInput()) return;
                         wayland_context.pin = .{ .buffer = undefined, .len = 0 };
                         wayland_context.surface.?.render() catch wayland_context.abort();
                         return;
@@ -286,6 +291,7 @@ const Seat = struct {
                     },
                     else => {},
                 }
+                if (!wayland_context.readingInput()) return;
                 {
                     @setRuntimeSafety(true);
                     const used = self.xkb_state.?.keyGetUtf8(keycode, wayland_context.pin.unusedCapacitySlice());
@@ -330,18 +336,15 @@ const Surface = struct {
     }
 
     fn calculateSize(self: *Surface) void {
-        switch (wayland_context.mode) {
-            .pinentry_getpin => {
-                // TODO add extra height for configured text
-                self.width = 600;
-                self.height = 40 + 2 * widget_padding; // TODO don't hardcode pinarea height
-                if (wayland_context.title) |title| self.height += title.height + widget_padding;
-                if (wayland_context.description) |description| self.height += description.height + widget_padding;
-                if (wayland_context.prompt) |prompt| self.height += prompt.height + widget_padding;
-                if (wayland_context.errmessage) |errmessage| self.height += errmessage.height + widget_padding;
-            },
-            .pinentry_message, .pinentry_confirm => {}, // TODO
+        self.width = 600;
+        self.height = widget_padding;
+        if (wayland_context.readingInput()) {
+            if (wayland_context.prompt) |prompt| self.height += prompt.height + widget_padding;
+            self.height += 40 + widget_padding; // TODO don't hardcode pinarea height
         }
+        if (wayland_context.title) |title| self.height += title.height + widget_padding;
+        if (wayland_context.description) |description| self.height += description.height + widget_padding;
+        if (wayland_context.errmessage) |errmessage| self.height += errmessage.height + widget_padding;
     }
 
     pub fn deinit(self: *const Surface) void {
@@ -372,20 +375,19 @@ const Surface = struct {
         const buffer = (try wayland_context.buffer_pool.nextBuffer(self.width, self.height)) orelse return;
         const image = buffer.*.pixman_image.?;
 
-        switch (wayland_context.mode) {
-            .pinentry_getpin => {
-                // TODO draw text, adjust y position of widgets accordingly.
-                self.drawBackground(image, self.width, self.height);
-                var Y: u31 = widget_padding;
-                if (wayland_context.title) |title| Y += try title.draw(image, widget_padding, Y);
-                if (wayland_context.description) |description| Y += try description.draw(image, widget_padding, Y);
-                if (wayland_context.prompt) |prompt| Y += try prompt.draw(image, widget_padding, Y);
-                self.drawPinarea(image, 16, try util.unicodeLen(wayland_context.pin.slice()), Y);
-                Y += 40 + widget_padding; // TODO do not hardcode pinarea size;
-                if (wayland_context.errmessage) |errmessage| Y += try errmessage.draw(image, widget_padding, Y);
-            },
-            .pinentry_confirm, .pinentry_message => {},
+        self.drawBackground(image, self.width, self.height);
+
+        var Y: u31 = widget_padding;
+        if (wayland_context.title) |title| Y += try title.draw(image, widget_padding, Y);
+        if (wayland_context.description) |description| Y += try description.draw(image, widget_padding, Y);
+
+        if (wayland_context.readingInput()) {
+            if (wayland_context.prompt) |prompt| Y += try prompt.draw(image, widget_padding, Y);
+            self.drawPinarea(image, 16, try util.unicodeLen(wayland_context.pin.slice()), Y);
+            Y += 40 + widget_padding; // TODO do not hardcode pinarea size;
         }
+
+        if (wayland_context.errmessage) |errmessage| Y += try errmessage.draw(image, widget_padding, Y);
 
         self.wl_surface.setBufferScale(self.scale);
         self.wl_surface.attach(buffer.*.wl_buffer.?, 0, 0);
@@ -559,12 +561,11 @@ const WaylandContext = struct {
     layer_shell: ?*zwlr.LayerShellV1 = null,
     compositor: ?*wl.Compositor = null,
     shm: ?*wl.Shm = null,
-    xkb_context: ?*xkb.Context = null,
     seats: std.TailQueue(Seat) = .{},
     buffer_pool: BufferPool = .{},
     surface: ?Surface = null,
-    font_regular: ?*fcft.Font = null,
-    font_large: ?*fcft.Font = null,
+
+    xkb_context: *xkb.Context = undefined,
 
     loop: bool = true,
     missing_wayland_interfaces: bool = false,
@@ -581,14 +582,28 @@ const WaylandContext = struct {
         _ = fcft.init(.never, false, .none);
         defer fcft.fini();
 
-        // TODO this errdefer probably messes with destruction order
-        var font_regular = [_][*:0]const u8{ "sans:size=14", "mono:size=14" };
-        self.font_regular = try fcft.Font.fromName(font_regular[0..], null);
-        errdefer self.font_regular.?.destroy();
+        var font_regular_names = [_][*:0]const u8{ "sans:size=14", "mono:size=14" };
+        const font_regular = try fcft.Font.fromName(font_regular_names[0..], null);
+        defer font_regular.destroy();
 
-        var font_large = [_][*:0]const u8{ "sans:size=20", "mono:size=20" };
-        self.font_large = try fcft.Font.fromName(font_large[0..], null);
-        errdefer self.font_large.?.destroy();
+        var font_large_names = [_][*:0]const u8{ "sans:size=20", "mono:size=20" };
+        const font_large = try fcft.Font.fromName(font_large_names[0..], null);
+        defer font_large.destroy();
+
+        switch (mode) {
+            .pinentry_getpin, .pinentry_confirm, .pinentry_message => {
+                if (pinentry_context.title) |title| self.title = try TextView.new(title, font_large);
+                if (pinentry_context.description) |description| self.description = try TextView.new(description, font_regular);
+                if (pinentry_context.errmessage) |errmessage| self.errmessage = try TextView.new(errmessage, font_regular);
+                if (pinentry_context.prompt) |prompt| self.prompt = try TextView.new(prompt, font_large);
+            },
+        }
+        defer {
+            if (self.title) |title| title.deinit();
+            if (self.description) |description| description.deinit();
+            if (self.prompt) |prompt| prompt.deinit();
+            if (self.errmessage) |errmessage| errmessage.deinit();
+        }
 
         const wayland_display = blk: {
             if (pinentry_context.wayland_display) |wd| break :blk wd;
@@ -607,14 +622,25 @@ const WaylandContext = struct {
         defer sync.destroy();
         sync.setListener(*WaylandContext, syncListener, self);
 
-        defer self.reset();
-
-        if (pinentry_context.title) |title| self.title = try TextView.new(title, self.font_large.?);
-        if (pinentry_context.description) |description| self.description = try TextView.new(description, self.font_regular.?);
-        if (pinentry_context.prompt) |prompt| self.prompt = try TextView.new(prompt, self.font_large.?);
-        if (pinentry_context.errmessage) |errmessage| self.errmessage = try TextView.new(errmessage, self.font_regular.?);
-
         self.xkb_context = xkb.Context.new(.no_flags) orelse return error.OutOfMemory;
+        defer (self.xkb_context.unref());
+
+        // Cleanup all things we may set up in response to Wayland events.
+        defer {
+            if (self.surface) |s| s.deinit();
+            self.buffer_pool.reset();
+            if (self.layer_shell) |ls| ls.destroy();
+            if (self.compositor) |cmp| cmp.destroy();
+            if (self.shm) |sm| sm.destroy();
+
+            var it = self.seats.first;
+            while (it) |node| {
+                it = node.next;
+                node.data.deinit();
+                const alloc = context.gpa.allocator();
+                alloc.destroy(node);
+            }
+        }
 
         // Per pinentry protocol documentation, the client may not send us anything
         // while it is waiting for a data response. So it's fine to just jump into
@@ -624,7 +650,7 @@ const WaylandContext = struct {
         }
         if (self.missing_wayland_interfaces) return error.MissingWaylandInterfaces;
 
-        if (self.pin.len > 0) {
+        if (self.readingInput() and self.pin.len > 0) {
             const alloc = context.gpa.allocator();
             const pin = try alloc.dupe(u8, self.pin.slice());
             return pin;
@@ -633,31 +659,8 @@ const WaylandContext = struct {
         }
     }
 
-    fn reset(self: *WaylandContext) void {
-        const alloc = context.gpa.allocator();
-
-        if (self.surface) |s| s.deinit();
-        if (self.layer_shell) |ls| ls.destroy();
-        if (self.compositor) |cmp| cmp.destroy();
-        if (self.shm) |sm| sm.destroy();
-        if (self.xkb_context) |xc| xc.unref();
-        if (self.title) |title| title.deinit();
-        if (self.description) |description| description.deinit();
-        if (self.prompt) |prompt| prompt.deinit();
-        if (self.errmessage) |errmessage| errmessage.deinit();
-        if (self.font_regular) |f| f.destroy();
-        if (self.font_large) |f| f.destroy();
-
-        self.buffer_pool.reset();
-
-        var it = self.seats.first;
-        while (it) |node| {
-            it = node.next;
-            node.data.deinit();
-            alloc.destroy(node);
-        }
-
-        self.* = .{};
+    pub fn readingInput(self: WaylandContext) bool {
+        return self.mode == .pinentry_getpin;
     }
 
     fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, self: *WaylandContext) void {
@@ -715,10 +718,11 @@ const WaylandContext = struct {
     }
 };
 
-var wayland_context: WaylandContext = .{};
+var wayland_context: WaylandContext = undefined;
 
 /// Returned pin is owned by context.gpa.
 pub fn run(mode: WaylandContext.Mode) !?[]const u8 {
+    wayland_context = .{};
     return (try wayland_context.run(mode));
 }
 

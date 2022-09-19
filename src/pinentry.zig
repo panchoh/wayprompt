@@ -6,6 +6,7 @@ const os = std.os;
 const io = std.io;
 const fs = std.fs;
 const fmt = std.fmt;
+const debug = std.debug;
 
 const wayland = @import("wayland.zig");
 
@@ -169,8 +170,14 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
             pinentry_context.errmessage = null;
         }
     } else if (ascii.eqlIgnoreCase(command, "message")) {
-        // TODO XXX Wayland widget
-        // TODO optionally allow executing a command for a notification
+        if (pinentry_context.title != null or
+            pinentry_context.description != null or
+            pinentry_context.errmessage != null)
+        {
+            _ = wayland.run(.pinentry_message) catch |err| {
+                try writer.print("# Error: {s}\n", .{@errorName(err)});
+            };
+        }
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "getinfo")) {
         if (it.next()) |info| {
