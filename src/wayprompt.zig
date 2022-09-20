@@ -23,12 +23,47 @@ const Context = struct {
     pinarea_background_colour: pixman.Color = pixmanColourFromRGB("0x999999") catch @compileError("Bad colour!"),
     pinarea_border_colour: pixman.Color = pixmanColourFromRGB("0x7F7F7F") catch @compileError("Bad colour!"),
     pinarea_square_colour: pixman.Color = pixmanColourFromRGB("0xCCCCCC") catch @compileError("Bad colour!"),
+
+    title: ?[]const u8 = null,
+    prompt: ?[]const u8 = null,
+    description: ?[]const u8 = null,
+    errmessage: ?[]const u8 = null,
+
+    // We may not have WAYLAND_DISPLAY in our env when we get started, or maybe
+    // even a bad one. However the gpg-agent will likely send us its own.
+    wayland_display: ?[:0]const u8 = null,
+
+    /// Release all allocated objects.
+    pub fn reset(self: *Context) void {
+        const alloc = self.gpa.allocator();
+        if (self.title) |t| {
+            alloc.free(t);
+            self.title = null;
+        }
+        if (self.prompt) |t| {
+            alloc.free(t);
+            self.prompt = null;
+        }
+        if (self.description) |t| {
+            alloc.free(t);
+            self.description = null;
+        }
+        if (self.errmessage) |t| {
+            alloc.free(t);
+            self.errmessage = null;
+        }
+        if (self.wayland_display) |t| {
+            alloc.free(t);
+            self.wayland_display = null;
+        }
+    }
 };
 
 pub var context: Context = .{};
 
 pub fn main() !u8 {
     defer _ = context.gpa.deinit();
+    defer context.reset();
 
     const exec_name = blk: {
         const full_command_name = mem.span(os.argv[0]);

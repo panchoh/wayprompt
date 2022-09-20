@@ -12,46 +12,7 @@ const wayland = @import("wayland.zig");
 
 const context = &@import("wayprompt.zig").context;
 
-const PinentryContext = struct {
-    title: ?[]const u8 = null,
-    prompt: ?[]const u8 = null,
-    description: ?[]const u8 = null,
-    errmessage: ?[]const u8 = null,
-
-    // We may not have WAYLAND_DISPLAY in our env when we get started, or maybe even
-    // a bad one. However the gpg-agent will likely send us its own.
-    wayland_display: ?[:0]const u8 = null,
-
-    pub fn reset(self: *PinentryContext) void {
-        const alloc = context.gpa.allocator();
-        if (self.title) |t| {
-            alloc.free(t);
-            self.title = null;
-        }
-        if (self.prompt) |p| {
-            alloc.free(p);
-            self.prompt = null;
-        }
-        if (self.description) |d| {
-            alloc.free(d);
-            self.description = null;
-        }
-        if (self.errmessage) |e| {
-            alloc.free(e);
-            self.errmessage = null;
-        }
-        if (self.wayland_display) |w| {
-            alloc.free(w);
-            self.wayland_display = null;
-        }
-    }
-};
-
-pub var pinentry_context: PinentryContext = .{};
-
 pub fn main() !u8 {
-    defer pinentry_context.reset();
-
     const stdout = io.getStdOut();
     const stdin = io.getStdIn();
 
@@ -115,20 +76,32 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
     var it = mem.tokenize(u8, line, &ascii.spaces);
     const command = it.next() orelse return;
     if (ascii.eqlIgnoreCase(command, "settitle")) {
-        if (pinentry_context.title) |p| alloc.free(p);
-        if (it.next()) |_| pinentry_context.title = try pinentryDupe(line["settitle ".len..]);
+        if (context.title) |p| {
+            context.title = null;
+            alloc.free(p);
+        }
+        if (it.next()) |_| context.title = try pinentryDupe(line["settitle ".len..]);
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "setprompt")) {
-        if (pinentry_context.prompt) |p| alloc.free(p);
-        if (it.next()) |_| pinentry_context.prompt = try pinentryDupe(line["setprompt ".len..]);
+        if (context.prompt) |p| {
+            context.prompt = null;
+            alloc.free(p);
+        }
+        if (it.next()) |_| context.prompt = try pinentryDupe(line["setprompt ".len..]);
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "setdesc")) {
-        if (pinentry_context.description) |d| alloc.free(d);
-        if (it.next()) |_| pinentry_context.description = try pinentryDupe(line["setdesc ".len..]);
+        if (context.description) |d| {
+            context.description = null;
+            alloc.free(d);
+        }
+        if (it.next()) |_| context.description = try pinentryDupe(line["setdesc ".len..]);
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "seterror")) {
-        if (pinentry_context.errmessage) |e| alloc.free(e);
-        if (it.next()) |_| pinentry_context.errmessage = try pinentryDupe(line["seterror ".len..]);
+        if (context.errmessage) |e| {
+            context.errmessage = null;
+            alloc.free(e);
+        }
+        if (it.next()) |_| context.errmessage = try pinentryDupe(line["seterror ".len..]);
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "getpin")) {
         // TODO it's possible that the gpg-apgent requests us to ask for the
@@ -154,9 +127,9 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
 
         // The errormessage must automatically reset after every GETPIN or
         // CONFIRM action.
-        if (pinentry_context.errmessage) |e| {
+        if (context.errmessage) |e| {
             alloc.free(e);
-            pinentry_context.errmessage = null;
+            context.errmessage = null;
         }
     } else if (ascii.eqlIgnoreCase(command, "confirm")) {
         // TODO XXX Wayland widget
@@ -166,18 +139,20 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
 
         // The errormessage must automatically reset after every GETPIN or
         // CONFIRM action.
-        if (pinentry_context.errmessage) |e| {
+        if (context.errmessage) |e| {
             alloc.free(e);
-            pinentry_context.errmessage = null;
+            context.errmessage = null;
         }
     } else if (ascii.eqlIgnoreCase(command, "message")) {
-        if (pinentry_context.title != null or
-            pinentry_context.description != null or
-            pinentry_context.errmessage != null)
+        if (context.title != null or
+            context.description != null or
+            context.errmessage != null)
         {
-            _ = wayland.run(.pinentry_message) catch |err| {
+            if (wayland.run(.pinentry_message)) |ret| {
+                debug.assert(ret == null);
+            } else |err| {
                 try writer.print("# Error: {s}\n", .{@errorName(err)});
-            };
+            }
         }
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "getinfo")) {
@@ -202,9 +177,8 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
         if (it.next()) |option| {
             const option_wayland = "putenv=WAYLAND_DISPLAY=";
             if (mem.startsWith(u8, option, option_wayland)) {
-                if (pinentry_context.wayland_display) |w| alloc.free(w);
-                pinentry_context.wayland_display = try alloc.dupeZ(u8, line["option ".len + option_wayland.len ..]);
-                try writer.print("# {s}\n", .{pinentry_context.wayland_display.?});
+                if (context.wayland_display) |w| alloc.free(w);
+                context.wayland_display = try alloc.dupeZ(u8, line["option ".len + option_wayland.len ..]);
             }
         }
         // Most options are internationalisation for features we don't offer.
@@ -213,7 +187,7 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
         // unknown ones would be: "ERR 83886254 Unknown option".
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "reset")) {
-        pinentry_context.reset();
+        context.reset();
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "setkeyinfo")) {
         // This request sets a key identifier to be used for key-caching

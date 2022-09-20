@@ -17,7 +17,6 @@ const zwlr = wayland.client.zwlr;
 const util = @import("util.zig");
 
 const context = &@import("wayprompt.zig").context;
-const pinentry_context = &@import("pinentry.zig").pinentry_context;
 
 const widget_padding = 10;
 
@@ -596,10 +595,10 @@ const WaylandContext = struct {
 
         switch (mode) {
             .pinentry_getpin, .pinentry_confirm, .pinentry_message => {
-                if (pinentry_context.title) |title| self.title = try TextView.new(title, font_large);
-                if (pinentry_context.description) |description| self.description = try TextView.new(description, font_regular);
-                if (pinentry_context.errmessage) |errmessage| self.errmessage = try TextView.new(errmessage, font_regular);
-                if (pinentry_context.prompt) |prompt| self.prompt = try TextView.new(prompt, font_large);
+                if (context.title) |title| self.title = try TextView.new(title, font_large);
+                if (context.description) |description| self.description = try TextView.new(description, font_regular);
+                if (context.errmessage) |errmessage| self.errmessage = try TextView.new(errmessage, font_regular);
+                if (context.prompt) |prompt| self.prompt = try TextView.new(prompt, font_large);
             },
         }
         defer {
@@ -610,7 +609,7 @@ const WaylandContext = struct {
         }
 
         const wayland_display = blk: {
-            if (pinentry_context.wayland_display) |wd| break :blk wd;
+            if (context.wayland_display) |wd| break :blk wd;
             if (os.getenv("WAYLAND_DISPLAY")) |wd| break :blk wd;
             return error.NoWaylandDisplay;
         };
