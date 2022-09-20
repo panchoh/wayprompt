@@ -35,7 +35,6 @@ const TextView = struct {
     font: *fcft.Font,
     width: u31,
     height: u31,
-    len: usize,
 
     pub fn new(str: []const u8, font: *fcft.Font) !TextView {
         var height = @intCast(u31, font.height);
@@ -66,7 +65,6 @@ const TextView = struct {
                 .font = font,
                 .width = width,
                 .height = height,
-                .len = codepoints.len,
             };
         } else {
             const glyphs = try alloc.alloc(*const fcft.Glyph, codepoints.len);
@@ -94,7 +92,6 @@ const TextView = struct {
                 .font = font,
                 .width = width,
                 .height = height,
-                .len = codepoints.len,
             };
         }
     }
@@ -114,10 +111,9 @@ const TextView = struct {
         const text_colour = comptime pixmanColourFromRGB("0xffffff") catch @compileError("bad colour");
 
         const glyphs = switch (self.mode) {
-            .text_run => self.mode.text_run.glyphs[0..self.len],
+            .text_run => self.mode.text_run.glyphs[0..self.mode.text_run.count],
             .glyphs => self.mode.glyphs.glyphs,
         };
-        debug.assert(glyphs.len == self.len);
 
         var X: u31 = x;
         var Y: u31 = y;
@@ -125,7 +121,6 @@ const TextView = struct {
         while (i < glyphs.len) : (i += 1) {
             if (self.mode == .glyphs) X += @intCast(u31, self.mode.glyphs.kerns[i]);
 
-            debug.print(">> i = {}\n", .{i});
             if (glyphs[i].cp == '\n') {
                 X = x;
                 Y += @intCast(u31, self.font.height);
