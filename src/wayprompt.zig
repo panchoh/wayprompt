@@ -4,6 +4,10 @@ const os = std.os;
 const heap = std.heap;
 const log = std.log.scoped(.wayprompt);
 const io = std.io;
+const fmt = std.fmt;
+const math = std.math;
+
+const pixman = @import("pixman");
 
 const ini = @import("ini.zig");
 const pinentry = @import("pinentry.zig");
@@ -11,6 +15,14 @@ const pinentry = @import("pinentry.zig");
 const Context = struct {
     loop: bool = true,
     gpa: heap.GeneralPurposeAllocator(.{}) = .{},
+
+    background_colour: pixman.Color = pixmanColourFromRGB("0x666666") catch @compileError("Bad colour!"),
+    border_colour: pixman.Color = pixmanColourFromRGB("0x333333") catch @compileError("Bad colour!"),
+    text_colour: pixman.Color = pixmanColourFromRGB("0xffffff") catch @compileError("Bad colour!"),
+    error_text_colour: pixman.Color = pixmanColourFromRGB("0xff0000") catch @compileError("Bad colour!"),
+    pinarea_background_colour: pixman.Color = pixmanColourFromRGB("0x999999") catch @compileError("Bad colour!"),
+    pinarea_border_colour: pixman.Color = pixmanColourFromRGB("0x7F7F7F") catch @compileError("Bad colour!"),
+    pinarea_square_colour: pixman.Color = pixmanColourFromRGB("0xCCCCCC") catch @compileError("Bad colour!"),
 };
 
 pub var context: Context = .{};
@@ -53,4 +65,30 @@ pub fn main() !u8 {
     }
 
     return 0;
+}
+
+// Copied and adapted from https://git.sr.ht/~novakane/zelbar, same license.
+fn pixmanColourFromRGB(descr: []const u8) !pixman.Color {
+    if (descr.len != "0xRRGGBB".len) return error.BadColour;
+    if (descr[0] != '0' or descr[1] != 'x') return error.BadColour;
+
+    var color = try fmt.parseUnsigned(u32, descr[2..], 16);
+    if (descr.len == 8) {
+        color <<= 8;
+        color |= 0xff;
+    }
+
+    const bytes = @bitCast([4]u8, color);
+
+    const r: u16 = bytes[3];
+    const g: u16 = bytes[2];
+    const b: u16 = bytes[1];
+    const a: u16 = bytes[0];
+
+    return pixman.Color{
+        .red = @as(u16, r << math.log2(0x101)) + r,
+        .green = @as(u16, g << math.log2(0x101)) + g,
+        .blue = @as(u16, b << math.log2(0x101)) + b,
+        .alpha = @as(u16, a << math.log2(0x101)) + a,
+    };
 }

@@ -3,7 +3,6 @@ const std = @import("std");
 const os = std.os;
 const cstr = std.cstr;
 const mem = std.mem;
-const fmt = std.fmt;
 const math = std.math;
 const unicode = std.unicode;
 const debug = std.debug;
@@ -107,9 +106,7 @@ const TextView = struct {
         }
     }
 
-    pub fn draw(self: *const TextView, image: *pixman.Image, x: u31, y: u31) !u31 {
-        const text_colour = comptime pixmanColourFromRGB("0xffffff") catch @compileError("bad colour");
-
+    pub fn draw(self: *const TextView, image: *pixman.Image, colour: *pixman.Color, x: u31, y: u31) !u31 {
         const glyphs = switch (self.mode) {
             .text_run => self.mode.text_run.glyphs[0..self.mode.text_run.count],
             .glyphs => self.mode.glyphs.glyphs,
@@ -127,7 +124,7 @@ const TextView = struct {
                 continue;
             }
 
-            const c = pixman.Image.createSolidFill(&text_colour).?;
+            const c = pixman.Image.createSolidFill(colour).?;
             defer _ = c.unref();
 
             switch (pixman.Image.getFormat(glyphs[i].pix)) {
@@ -371,16 +368,16 @@ const Surface = struct {
         self.drawBackground(image, self.width, self.height);
 
         var Y: u31 = widget_padding;
-        if (wayland_context.title) |title| Y += try title.draw(image, widget_padding, Y);
-        if (wayland_context.description) |description| Y += try description.draw(image, widget_padding, Y);
+        if (wayland_context.title) |title| Y += try title.draw(image, &context.text_colour, widget_padding, Y);
+        if (wayland_context.description) |description| Y += try description.draw(image, &context.text_colour, widget_padding, Y);
 
         if (wayland_context.readingInput()) {
-            if (wayland_context.prompt) |prompt| Y += try prompt.draw(image, widget_padding, Y);
+            if (wayland_context.prompt) |prompt| Y += try prompt.draw(image, &context.text_colour, widget_padding, Y);
             self.drawPinarea(image, 16, try util.unicodeLen(wayland_context.pin.slice()), Y);
             Y += 40 + widget_padding; // TODO do not hardcode pinarea size;
         }
 
-        if (wayland_context.errmessage) |errmessage| Y += try errmessage.draw(image, widget_padding, Y);
+        if (wayland_context.errmessage) |errmessage| Y += try errmessage.draw(image, &context.error_text_colour, widget_padding, Y);
 
         self.wl_surface.setBufferScale(self.scale);
         self.wl_surface.attach(buffer.*.wl_buffer.?, 0, 0);
@@ -390,9 +387,7 @@ const Surface = struct {
     }
 
     fn drawBackground(self: *Surface, image: *pixman.Image, width: u31, height: u31) void {
-        const background_colour = comptime pixmanColourFromRGB("0x666666") catch @compileError("bad colour");
-        const border_colour = comptime pixmanColourFromRGB("0x333333") catch @compileError("bad colour");
-        borderedRectangle(image, 0, 0, width, height, 2, self.scale, &background_colour, &border_colour);
+        borderedRectangle(image, 0, 0, width, height, 2, self.scale, &context.background_colour, &context.border_colour);
     }
 
     fn drawPinarea(self: *Surface, image: *pixman.Image, capacity: u31, len: usize, pinarea_y: u31) void {
@@ -404,17 +399,33 @@ const Surface = struct {
         const pinarea_width = capacity * (square_size + 2 * square_halfpadding) + 2 * square_halfpadding;
         const pinarea_x = @divFloor(self.width, 2) - @divFloor(pinarea_width, 2);
 
-        const background_colour = comptime pixmanColourFromRGB("0x999999") catch @compileError("bad colour");
-        const border_colour = comptime pixmanColourFromRGB("0x7F7F7F") catch @compileError("bad colour");
-        const square_colour = comptime pixmanColourFromRGB("0xCCCCCC") catch @compileError("bad colour");
-
-        borderedRectangle(image, pinarea_x, pinarea_y, pinarea_width, pinarea_height, 2, self.scale, &background_colour, &border_colour);
+        borderedRectangle(
+            image,
+            pinarea_x,
+            pinarea_y,
+            pinarea_width,
+            pinarea_height,
+            2,
+            self.scale,
+            &context.pinarea_background_colour,
+            &context.pinarea_border_colour,
+        );
 
         var i: usize = 0;
         while (i < len and i < capacity) : (i += 1) {
             const x = @intCast(u31, pinarea_x + i * square_size + (i + 1) * square_padding);
             const y = pinarea_y + square_padding;
-            borderedRectangle(image, x, y, square_size, square_size, 1, self.scale, &square_colour, &border_colour);
+            borderedRectangle(
+                image,
+                x,
+                y,
+                square_size,
+                square_size,
+                1,
+                self.scale,
+                &context.pinarea_square_colour,
+                &context.pinarea_border_colour,
+            );
         }
     }
 
@@ -717,30 +728,4 @@ var wayland_context: WaylandContext = undefined;
 pub fn run(mode: WaylandContext.Mode) !?[]const u8 {
     wayland_context = .{};
     return (try wayland_context.run(mode));
-}
-
-// Copied and adapted from https://git.sr.ht/~novakane/zelbar, same license.
-fn pixmanColourFromRGB(descr: []const u8) !pixman.Color {
-    if (descr.len != "0xRRGGBB".len) return error.BadColour;
-    if (descr[0] != '0' or descr[1] != 'x') return error.BadColour;
-
-    var color = try fmt.parseUnsigned(u32, descr[2..], 16);
-    if (descr.len == 8) {
-        color <<= 8;
-        color |= 0xff;
-    }
-
-    const bytes = @bitCast([4]u8, color);
-
-    const r: u16 = bytes[3];
-    const g: u16 = bytes[2];
-    const b: u16 = bytes[1];
-    const a: u16 = bytes[0];
-
-    return pixman.Color{
-        .red = @as(u16, r << math.log2(0x101)) + r,
-        .green = @as(u16, g << math.log2(0x101)) + g,
-        .blue = @as(u16, b << math.log2(0x101)) + b,
-        .alpha = @as(u16, a << math.log2(0x101)) + a,
-    };
 }
