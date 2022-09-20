@@ -127,6 +127,9 @@ const TextView = struct {
                 continue;
             }
 
+            const c = pixman.Image.createSolidFill(&text_colour).?;
+            defer _ = c.unref();
+
             switch (pixman.Image.getFormat(glyphs[i].pix)) {
                 // Pre-rendered Image.
                 .a8r8g8b8 => pixman.Image.composite32(
@@ -146,11 +149,6 @@ const TextView = struct {
 
                 // Alpha mask (i.e. regular character).
                 else => {
-                    // TODO: this probably allocs memory, so investigate replacement.
-                    // TODO: do we need to recreate this for every char?
-                    const c = pixman.Image.createSolidFill(&text_colour).?;
-                    defer _ = c.unref();
-
                     pixman.Image.composite32(
                         .over,
                         c,
