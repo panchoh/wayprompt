@@ -107,7 +107,7 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
         // TODO it's possible that the gpg-apgent requests us to ask for the
         //      pin twice (f.e. when the user creates a new one, I imagine).
         //      This needs support in the UI.
-        const pin = wayland.run(.pinentry_getpin) catch |err| {
+        const pin = wayland.run(.getpin) catch |err| {
             // The client will ignore all messages starting with #, however they
             // should still be logged by the gpg-agent, given that the right
             // debug options are enabled. This means we can use this to insert
@@ -148,7 +148,7 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
             context.description != null or
             context.errmessage != null)
         {
-            if (wayland.run(.pinentry_message)) |ret| {
+            if (wayland.run(.message)) |ret| {
                 debug.assert(ret == null);
             } else |err| {
                 try writer.print("# Error: {s}\n", .{@errorName(err)});

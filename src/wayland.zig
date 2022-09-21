@@ -552,8 +552,8 @@ const Buffer = struct {
     }
 };
 
-const WaylandContext = struct {
-    const Mode = enum { pinentry_getpin, pinentry_message, pinentry_confirm };
+pub const WaylandContext = struct {
+    pub const Mode = enum { getpin, message, confirm };
     mode: Mode = undefined,
 
     title: ?TextView = null,
@@ -593,20 +593,14 @@ const WaylandContext = struct {
         const font_large = try fcft.Font.fromName(font_large_names[0..], null);
         defer font_large.destroy();
 
-        switch (mode) {
-            .pinentry_getpin, .pinentry_confirm, .pinentry_message => {
-                if (context.title) |title| self.title = try TextView.new(title, font_large);
-                if (context.description) |description| self.description = try TextView.new(description, font_regular);
-                if (context.errmessage) |errmessage| self.errmessage = try TextView.new(errmessage, font_regular);
-                if (context.prompt) |prompt| self.prompt = try TextView.new(prompt, font_large);
-            },
-        }
-        defer {
-            if (self.title) |title| title.deinit();
-            if (self.description) |description| description.deinit();
-            if (self.prompt) |prompt| prompt.deinit();
-            if (self.errmessage) |errmessage| errmessage.deinit();
-        }
+        if (context.title) |title| self.title = try TextView.new(title, font_large);
+        defer if (self.title) |title| title.deinit();
+        if (context.description) |description| self.description = try TextView.new(description, font_regular);
+        defer if (self.description) |description| description.deinit();
+        if (context.errmessage) |errmessage| self.errmessage = try TextView.new(errmessage, font_regular);
+        defer if (self.errmessage) |errmessage| errmessage.deinit();
+        if (context.prompt) |prompt| self.prompt = try TextView.new(prompt, font_large);
+        defer if (self.prompt) |prompt| prompt.deinit();
 
         const wayland_display = blk: {
             if (context.wayland_display) |wd| break :blk wd;
@@ -663,7 +657,7 @@ const WaylandContext = struct {
     }
 
     pub fn readingInput(self: WaylandContext) bool {
-        return self.mode == .pinentry_getpin;
+        return self.mode == .getpin;
     }
 
     fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, self: *WaylandContext) void {

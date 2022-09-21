@@ -11,6 +11,7 @@ const pixman = @import("pixman");
 
 const ini = @import("ini.zig");
 const pinentry = @import("pinentry.zig");
+const cli = @import("cli.zig");
 
 const Context = struct {
     loop: bool = true,
@@ -81,7 +82,7 @@ pub fn main() !u8 {
     } else if (mem.startsWith(u8, exec_name, "hiprompt")) {
         @panic("TODO");
     } else if (mem.eql(u8, exec_name, "wayprompt-cli")) {
-        @panic("TODO");
+        return try cli.main();
     } else {
         const stdout = io.getStdOut();
         var out_buffer = io.bufferedWriter(stdout.writer());
