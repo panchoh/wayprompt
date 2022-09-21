@@ -113,11 +113,18 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
             // debug options are enabled. This means we can use this to insert
             // arbitrary messages into the logs and therefore have proper error
             // logging.
-            try writer.print("# Error: {s}\n", .{@errorName(err)});
+            //
+            // Technically there is a difference between pressing enter on an
+            // empty prompt and the user aborting. However, gpg-agent apparently
+            // treats both equally. We do it properly of course, because we're
+            // pedantic. Anyway, that's why error.UserAbort exists and why we
+            // don't print it because it's not /really/ an error.
+            if (err != error.UserAbort) {
+                try writer.print("# Error: {s}\n", .{@errorName(err)});
+            }
             try writer.writeAll("ERR 83886179 Operation cancelled\n");
             return;
         };
-        // TODO don't send OK when escape is pressed, instead send "ERR 83886179 cancelled"
         if (pin) |p| {
             defer alloc.free(p);
             try writer.print("D {s}\nEND\nOK\n", .{p});

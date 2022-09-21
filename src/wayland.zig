@@ -225,21 +225,21 @@ const Seat = struct {
             .keymap => |ev| {
                 defer os.close(ev.fd);
                 if (ev.format != .xkb_v1) {
-                    wayland_context.abort();
+                    wayland_context.abort(error.UnsupportedKeyboardLayoutFormat);
                     return;
                 }
                 const keymap_str = os.mmap(null, ev.size, os.PROT.READ, os.MAP.PRIVATE, ev.fd, 0) catch {
-                    wayland_context.abort();
+                    wayland_context.abort(error.OutOfMemory);
                     return;
                 };
                 defer os.munmap(keymap_str);
                 const keymap = xkb.Keymap.newFromBuffer(wayland_context.xkb_context, keymap_str.ptr, keymap_str.len - 1, .text_v1, .no_flags) orelse {
-                    wayland_context.abort();
+                    wayland_context.abort(error.OutOfMemory);
                     return;
                 };
                 defer keymap.unref();
                 const state = xkb.State.new(keymap) orelse {
-                    wayland_context.abort();
+                    wayland_context.abort(error.OutOfMemory);
                     return;
                 };
                 defer state.unref();
@@ -266,17 +266,17 @@ const Seat = struct {
                         // TODO to properly delete inputs, we need a codepoint
                         //      buffer (u21). Probably just copy the one from
                         //      nfm.
-                        wayland_context.surface.?.render() catch wayland_context.abort();
+                        wayland_context.surface.?.render() catch wayland_context.abort(error.OutOfMemory);
                         return;
                     },
                     xkb.Keysym.Delete => {
                         if (!wayland_context.readingInput()) return;
                         wayland_context.pin = .{ .buffer = undefined, .len = 0 };
-                        wayland_context.surface.?.render() catch wayland_context.abort();
+                        wayland_context.surface.?.render() catch wayland_context.abort(error.OutOfMemory);
                         return;
                     },
                     xkb.Keysym.Escape => {
-                        wayland_context.abort();
+                        wayland_context.abort(error.UserAbort);
                         return;
                     },
                     else => {},
@@ -285,11 +285,11 @@ const Seat = struct {
                 {
                     @setRuntimeSafety(true);
                     const used = self.xkb_state.?.keyGetUtf8(keycode, wayland_context.pin.unusedCapacitySlice());
-                    wayland_context.pin.resize(wayland_context.pin.len + used) catch wayland_context.abort();
+                    wayland_context.pin.resize(wayland_context.pin.len + used) catch wayland_context.abort(error.OutOfMemory);
                 }
 
                 // We only get keyboard input when a surface exists.
-                wayland_context.surface.?.render() catch wayland_context.abort();
+                wayland_context.surface.?.render() catch wayland_context.abort(error.OutOfMemory);
             },
             .enter => {},
             .leave => {},
@@ -351,11 +351,11 @@ const Surface = struct {
                 self.configured = true;
                 layer_surface.ackConfigure(ev.serial);
                 self.render() catch {
-                    wayland_context.abort();
+                    wayland_context.abort(error.OutOfMemory);
                     return;
                 };
             },
-            .closed => wayland_context.abort(),
+            .closed => wayland_context.abort(error.OutOfMemory),
         }
     }
 
@@ -572,12 +572,14 @@ pub const WaylandContext = struct {
     xkb_context: *xkb.Context = undefined,
 
     loop: bool = true,
-    missing_wayland_interfaces: bool = false,
+    exit_reason: ?anyerror = null,
+
     pin: std.BoundedArray(u8, 1024) = .{ .buffer = undefined, .len = 0 },
 
-    pub fn abort(self: *WaylandContext) void {
+    pub fn abort(self: *WaylandContext, reason: anyerror) void {
         self.pin = .{ .buffer = undefined, .len = 0 };
         self.loop = false;
+        self.exit_reason = reason;
     }
 
     pub fn run(self: *WaylandContext, mode: Mode) !?[]const u8 {
@@ -646,7 +648,11 @@ pub const WaylandContext = struct {
         while (self.loop) {
             if (display.dispatch() != .SUCCESS) return error.DispatchFailed;
         }
-        if (self.missing_wayland_interfaces) return error.MissingWaylandInterfaces;
+
+        if (self.exit_reason) |reason| {
+            debug.assert(self.pin.len == 0);
+            return reason;
+        }
 
         if (self.readingInput() and self.pin.len > 0) {
             const alloc = context.gpa.allocator();
@@ -666,27 +672,27 @@ pub const WaylandContext = struct {
             .global => |ev| {
                 if (cstr.cmp(ev.interface, zwlr.LayerShellV1.getInterface().name) == 0) {
                     self.layer_shell = registry.bind(ev.name, zwlr.LayerShellV1, 4) catch {
-                        self.abort();
+                        self.abort(error.OutOfMemory);
                         return;
                     };
                 } else if (cstr.cmp(ev.interface, wl.Compositor.getInterface().name) == 0) {
                     self.compositor = registry.bind(ev.name, wl.Compositor, 4) catch {
-                        self.abort();
+                        self.abort(error.OutOfMemory);
                         return;
                     };
                 } else if (cstr.cmp(ev.interface, wl.Shm.getInterface().name) == 0) {
                     self.shm = registry.bind(ev.name, wl.Shm, 1) catch {
-                        self.abort();
+                        self.abort(error.OutOfMemory);
                         return;
                     };
                 } else if (cstr.cmp(ev.interface, wl.Seat.getInterface().name) == 0) {
                     const seat = registry.bind(ev.name, wl.Seat, 1) catch {
-                        self.abort();
+                        self.abort(error.OutOfMemory);
                         return;
                     };
                     self.addSeat(seat) catch {
                         seat.destroy();
-                        self.abort();
+                        self.abort(error.OutOfMemory);
                     };
                 }
             },
@@ -703,14 +709,13 @@ pub const WaylandContext = struct {
 
     fn syncListener(_: *wl.Callback, _: wl.Callback.Event, self: *WaylandContext) void {
         if (self.layer_shell == null or self.compositor == null or self.shm == null) {
-            self.missing_wayland_interfaces = true;
-            self.abort();
+            self.abort(error.MissingWaylandInterfaces);
         }
 
         self.surface = Surface{};
         self.surface.?.init() catch {
             self.surface = null;
-            self.abort();
+            self.abort(error.OutOfMemory);
             return;
         };
     }

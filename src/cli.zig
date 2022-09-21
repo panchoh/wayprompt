@@ -32,6 +32,7 @@ pub fn main() !u8 {
     }
 
     const pin = wayland.run(mode) catch |err| {
+        if (err == error.UserAbort) return 2; // TODO document exit codes?
         log.err("failed to run: {}", .{err});
         return 1;
     };
