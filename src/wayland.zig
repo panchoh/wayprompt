@@ -52,7 +52,7 @@ const TextView = struct {
         }
 
         if ((fcft.capabilities() & fcft.Capabilities.text_run_shaping) != 0) {
-            const text_run = try font.rasterizeTextRunUtf32(codepoints, .none);
+            const text_run = try font.rasterizeTextRunUtf32(codepoints, .default);
             var width: u31 = 0;
             var i: usize = 0;
             while (i < text_run.count) : (i += 1) {
@@ -74,7 +74,7 @@ const TextView = struct {
             var i: usize = 0;
             var width: u31 = 0;
             while (i < codepoints.len) : (i += 1) {
-                glyphs[i] = try font.rasterizeCharUtf32(codepoints[i], .none);
+                glyphs[i] = try font.rasterizeCharUtf32(codepoints[i], .default);
                 kerns[i] = 0;
                 if (i > 0) {
                     var x_kern: c_long = 0;

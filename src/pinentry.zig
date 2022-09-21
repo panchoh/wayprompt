@@ -117,6 +117,7 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
             try writer.writeAll("ERR 83886179 Operation cancelled\n");
             return;
         };
+        // TODO don't send OK when escape is pressed, instead send "ERR 83886179 cancelled"
         if (pin) |p| {
             defer alloc.free(p);
             try writer.print("D {s}\nEND\nOK\n", .{p});
@@ -136,6 +137,9 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
         // TODO this can optionally have the "--one-button" option, in which
         //      case it effectively functions like MESSAGE.
         try writer.writeAll("OK\n");
+
+        // TODO Message when notok button is clicked: "ERR 83886194 not confirmed"
+        // TODO Message when cancel button is clicked: "ERR 83886179 cancelled"
 
         // The errormessage must automatically reset after every GETPIN or
         // CONFIRM action.
