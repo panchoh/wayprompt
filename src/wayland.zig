@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const ascii = std.ascii;
 const os = std.os;
 const cstr = std.cstr;
 const mem = std.mem;
@@ -593,13 +594,13 @@ pub const WaylandContext = struct {
         const font_large = try fcft.Font.fromName(font_large_names[0..], null);
         defer font_large.destroy();
 
-        if (context.title) |title| self.title = try TextView.new(title, font_large);
+        if (context.title) |title| self.title = try TextView.new(mem.trim(u8, title, &ascii.spaces), font_large);
         defer if (self.title) |title| title.deinit();
-        if (context.description) |description| self.description = try TextView.new(description, font_regular);
+        if (context.description) |description| self.description = try TextView.new(mem.trim(u8, description, &ascii.spaces), font_regular);
         defer if (self.description) |description| description.deinit();
-        if (context.errmessage) |errmessage| self.errmessage = try TextView.new(errmessage, font_regular);
+        if (context.errmessage) |errmessage| self.errmessage = try TextView.new(mem.trim(u8, errmessage, &ascii.spaces), font_regular);
         defer if (self.errmessage) |errmessage| errmessage.deinit();
-        if (context.prompt) |prompt| self.prompt = try TextView.new(prompt, font_large);
+        if (context.prompt) |prompt| self.prompt = try TextView.new(mem.trim(u8, prompt, &ascii.spaces), font_large);
         defer if (self.prompt) |prompt| prompt.deinit();
 
         const wayland_display = blk: {
