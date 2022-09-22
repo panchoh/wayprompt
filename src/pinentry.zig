@@ -226,6 +226,11 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
         ascii.eqlIgnoreCase(command, "clearpassphrase") or // Undocumented, but present in "default" pinentry.
         ascii.eqlIgnoreCase(command, "setrepeat") or // TODO prompt twice for the password, compare them and only accept when equal.
         ascii.eqlIgnoreCase(command, "setrepeaterror") or
+        // A qualitybar is technically easy to implement: The argument to the
+        // command is the text next to the bar, which we'd probably ignore.
+        // If set, we can send "INQUIRE QUALITY <pin>" after every keypress and
+        // the client will respond with "<integer>\nEND\n". Would require doing
+        // so in the wayland event loop though.
         ascii.eqlIgnoreCase(command, "setqualitybar") or
         ascii.eqlIgnoreCase(command, "setqualitybar_tt"))
     {

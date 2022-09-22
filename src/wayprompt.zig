@@ -6,6 +6,8 @@ const log = std.log.scoped(.wayprompt);
 const io = std.io;
 const fmt = std.fmt;
 const math = std.math;
+const fs = std.fs;
+const meta = std.meta;
 
 const pixman = @import("pixman");
 
@@ -17,13 +19,13 @@ const Context = struct {
     loop: bool = true,
     gpa: heap.GeneralPurposeAllocator(.{}) = .{},
 
-    background_colour: pixman.Color = pixmanColourFromRGB("0x666666") catch @compileError("Bad colour!"),
-    border_colour: pixman.Color = pixmanColourFromRGB("0x333333") catch @compileError("Bad colour!"),
-    text_colour: pixman.Color = pixmanColourFromRGB("0xffffff") catch @compileError("Bad colour!"),
+    background_colour: pixman.Color = pixmanColourFromRGB("0xffffff") catch @compileError("Bad colour!"),
+    border_colour: pixman.Color = pixmanColourFromRGB("0x000000") catch @compileError("Bad colour!"),
+    text_colour: pixman.Color = pixmanColourFromRGB("0x000000") catch @compileError("Bad colour!"),
     error_text_colour: pixman.Color = pixmanColourFromRGB("0xff0000") catch @compileError("Bad colour!"),
-    pinarea_background_colour: pixman.Color = pixmanColourFromRGB("0x999999") catch @compileError("Bad colour!"),
-    pinarea_border_colour: pixman.Color = pixmanColourFromRGB("0x7F7F7F") catch @compileError("Bad colour!"),
-    pinarea_square_colour: pixman.Color = pixmanColourFromRGB("0xCCCCCC") catch @compileError("Bad colour!"),
+    pinarea_background_colour: pixman.Color = pixmanColourFromRGB("0xd0d0d0") catch @compileError("Bad colour!"),
+    pinarea_border_colour: pixman.Color = pixmanColourFromRGB("0x000000") catch @compileError("Bad colour!"),
+    pinarea_square_colour: pixman.Color = pixmanColourFromRGB("0x808080") catch @compileError("Bad colour!"),
 
     title: ?[]const u8 = null,
     prompt: ?[]const u8 = null,
@@ -66,6 +68,8 @@ pub fn main() !u8 {
     defer _ = context.gpa.deinit();
     defer context.reset();
 
+    parseConfig() catch return 1;
+
     const exec_name = blk: {
         const full_command_name = mem.span(os.argv[0]);
         var i: usize = full_command_name.len - 1;
@@ -101,6 +105,89 @@ pub fn main() !u8 {
     }
 
     return 0;
+}
+
+fn parseConfig() !void {
+    const alloc = context.gpa.allocator();
+    const path = blk: {
+        if (os.getenv("XDG_CONFIG_HOME")) |xdg_config_home| {
+            break :blk try fs.path.join(alloc, &[_][]const u8{
+                xdg_config_home,
+                "wayprompt/config.ini",
+            });
+        } else if (os.getenv("HOME")) |home| {
+            break :blk try fs.path.join(alloc, &[_][]const u8{
+                home,
+                ".config/wayprompt/config.ini",
+            });
+        } else {
+            break :blk try alloc.dupe(u8, "/etc/wayprompt/config.ini");
+        }
+    };
+    defer alloc.free(path);
+    os.access(path, os.R_OK) catch return;
+    const file = try fs.cwd().openFile(path, .{});
+    defer file.close();
+
+    const Section = enum { none, colours };
+    var section: Section = .none;
+
+    var buffer = std.io.bufferedReader(file.reader());
+    var it = ini.tokenize(buffer.reader());
+    var line: usize = 0;
+    while (it.next(&line) catch |err| {
+        if (err == error.InvalidLine) {
+            log.err("{s}:{}: Syntax error.", .{ path, line });
+            return error.BadConfig;
+        } else {
+            return err;
+        }
+    }) |content| {
+        switch (content) {
+            .section => |sect| section = blk: {
+                const sec = meta.stringToEnum(Section, sect);
+                if (sec == null or sec.? == .none) {
+                    log.err("{s}:{}: Unknown section '{s}'.", .{ path, line, sec });
+                    return error.BadConfig;
+                }
+                break :blk sec.?;
+            },
+            .assign => |as| switch (section) {
+                .none => {
+                    log.err("{s}:{}: Assignments must be part of a section.", .{ path, line });
+                    return error.BadConfig;
+                },
+                .colours => assignColour(as.variable, as.value) catch |err| {
+                    switch (err) {
+                        error.BadColour => log.err("{s}:{}: Bad colour: '{s}'", .{ path, line, as.value }),
+                        error.UnknownColour => log.err("{s}:{}: Unknown colour: '{s}'", .{ path, line, as.variable }),
+                        else => log.err("{s}:{}: Error while parsing colour: '{s}': {}", .{ path, line, as.variable, err }),
+                    }
+                    return error.BadConfig;
+                },
+            },
+        }
+    }
+}
+
+fn assignColour(variable: []const u8, value: []const u8) !void {
+    if (mem.eql(u8, variable, "background")) {
+        context.background_colour = try pixmanColourFromRGB(value);
+    } else if (mem.eql(u8, variable, "border")) {
+        context.border_colour = try pixmanColourFromRGB(value);
+    } else if (mem.eql(u8, variable, "text")) {
+        context.text_colour = try pixmanColourFromRGB(value);
+    } else if (mem.eql(u8, variable, "error-text")) {
+        context.error_text_colour = try pixmanColourFromRGB(value);
+    } else if (mem.eql(u8, variable, "pin-background")) {
+        context.pinarea_background_colour = try pixmanColourFromRGB(value);
+    } else if (mem.eql(u8, variable, "pin-border")) {
+        context.pinarea_border_colour = try pixmanColourFromRGB(value);
+    } else if (mem.eql(u8, variable, "pin-square")) {
+        context.pinarea_square_colour = try pixmanColourFromRGB(value);
+    } else {
+        return error.UnknownColour;
+    }
 }
 
 // Copied and adapted from https://git.sr.ht/~novakane/zelbar, same license.
