@@ -45,7 +45,7 @@ const Context = struct {
     pin_square_amount: u31 = 16,
     pin_square_border: u31 = 1,
     button_border: u31 = 1,
-    border: u31 = 1,
+    border: u31 = 2,
 
     // We may not have WAYLAND_DISPLAY in our env when we get started, or maybe
     // even a bad one. However the gpg-agent will likely send us its own.
