@@ -106,6 +106,24 @@ fn parseCmdFlags() !void {
                 log.err("flag '--wayland-display' needs an argument.", .{});
                 return error.MissingArgument;
             });
+        } else if (mem.eql(u8, flag, "--button-ok")) {
+            if (context.ok) |ok| alloc.free(ok);
+            context.ok = try alloc.dupeZ(u8, it.next() orelse {
+                log.err("flag '--button-ok' needs an argument.", .{});
+                return error.MissingArgument;
+            });
+        } else if (mem.eql(u8, flag, "--button-not-ok")) {
+            if (context.notok) |notok| alloc.free(notok);
+            context.notok = try alloc.dupeZ(u8, it.next() orelse {
+                log.err("flag '--button-not-ok' needs an argument.", .{});
+                return error.MissingArgument;
+            });
+        } else if (mem.eql(u8, flag, "--button-cancel")) {
+            if (context.cancel) |cancel| alloc.free(cancel);
+            context.cancel = try alloc.dupeZ(u8, it.next() orelse {
+                log.err("flag '--button-cancel' needs an argument.", .{});
+                return error.MissingArgument;
+            });
         } else if (mem.eql(u8, flag, "--mode")) {
             const m = it.next() orelse {
                 log.err("flag '--mode' needs an argument.", .{});
@@ -125,6 +143,9 @@ fn parseCmdFlags() !void {
                 \\--error             Set the error message.
                 \\--wayland-display   Set the WAYLAND_DISPLAY to be used.
                 \\--mode              Set the mode. May be 'getpin', 'message' or 'confirm'.
+                \\--button-ok         Text of the ok button.
+                \\--button-no-ok      Text of the not ok button.
+                \\--button-cancel     Text of the cancel button.
                 \\--help, -h          Dump help text and exit.
                 \\
             , .{os.argv[0]});
