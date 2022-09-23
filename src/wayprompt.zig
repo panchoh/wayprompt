@@ -203,6 +203,12 @@ fn assignColour(variable: []const u8, value: []const u8) !void {
         context.pinarea_border_colour = try pixmanColourFromRGB(value);
     } else if (mem.eql(u8, variable, "pin-square")) {
         context.pinarea_square_colour = try pixmanColourFromRGB(value);
+    } else if (mem.eql(u8, variable, "ok-button")) {
+        context.ok_button_background_colour = try pixmanColourFromRGB(value);
+    } else if (mem.eql(u8, variable, "notok-button")) {
+        context.notok_button_background_colour = try pixmanColourFromRGB(value);
+    } else if (mem.eql(u8, variable, "cancel-button")) {
+        context.cancel_button_background_colour = try pixmanColourFromRGB(value);
     } else {
         return error.UnknownColour;
     }
