@@ -19,9 +19,6 @@ const util = @import("util.zig");
 
 const context = &@import("wayprompt.zig").context;
 
-const widget_padding = 10;
-const button_padding = 5;
-
 // Copied and adapted from https://git.sr.ht/~novakane/zelbar, same license.
 const TextView = struct {
     const Mode = union(enum) {
@@ -191,7 +188,7 @@ const TextView = struct {
             X += @intCast(u31, glyphs[i].advance.x);
         }
 
-        return self.height + widget_padding;
+        return self.height + context.vertical_padding;
     }
 };
 
@@ -351,50 +348,54 @@ const Surface = struct {
     }
 
     fn calculateSize(self: *Surface) void {
-        self.height = widget_padding;
-        self.width = widget_padding;
+        self.height = context.vertical_padding;
+        self.width = context.horizontal_padding;
 
         if (wayland_context.mode == .getpin) {
             if (wayland_context.prompt) |prompt| {
-                self.width = math.max(prompt.width + 2 * widget_padding, self.width);
-                self.height += prompt.height + widget_padding;
+                self.width = math.max(prompt.width + 2 * context.horizontal_padding, self.width);
+                self.height += prompt.height + context.vertical_padding;
             }
 
-            self.height += 40 + widget_padding; // TODO don't hardcode pinarea height
-            self.width = math.max(self.width, 600); // TODO don't hardcode pinarea width
+            const square_padding = @divFloor(context.pin_square_size, 2);
+            const pinarea_height = context.pin_square_size + 2 * square_padding;
+            const pinarea_width = context.pin_square_amount * (context.pin_square_size + square_padding) + square_padding;
+
+            self.height += pinarea_height + context.vertical_padding;
+            self.width = math.max(self.width, pinarea_width + 2 * context.horizontal_padding);
         }
 
         if (wayland_context.title) |title| {
-            self.width = math.max(title.width + 2 * widget_padding, self.width);
-            self.height += title.height + widget_padding;
+            self.width = math.max(title.width + 2 * context.horizontal_padding, self.width);
+            self.height += title.height + context.vertical_padding;
         }
         if (wayland_context.description) |description| {
-            self.width = math.max(description.width + 2 * widget_padding, self.width);
-            self.height += description.height + widget_padding;
+            self.width = math.max(description.width + 2 * context.horizontal_padding, self.width);
+            self.height += description.height + context.vertical_padding;
         }
         if (wayland_context.errmessage) |errmessage| {
-            self.width = math.max(errmessage.width + 2 * widget_padding, self.width);
-            self.height += errmessage.height + widget_padding;
+            self.width = math.max(errmessage.width + 2 * context.horizontal_padding, self.width);
+            self.height += errmessage.height + context.vertical_padding;
         }
 
         {
             const combined_button_length = blk: {
                 var len: u31 = 0;
-                if (wayland_context.ok) |ok| len += ok.width + widget_padding + 2 * button_padding;
-                if (wayland_context.notok) |notok| len += notok.width + widget_padding + 2 * button_padding;
-                if (wayland_context.cancel) |cancel| len += cancel.width + widget_padding + 2 * button_padding;
+                if (wayland_context.ok) |ok| len += ok.width + context.horizontal_padding + 2 * context.button_inner_padding;
+                if (wayland_context.notok) |notok| len += notok.width + context.horizontal_padding + 2 * context.button_inner_padding;
+                if (wayland_context.cancel) |cancel| len += cancel.width + context.horizontal_padding + 2 * context.button_inner_padding;
                 break :blk len;
             };
-            self.width = math.max(combined_button_length + widget_padding, self.width);
+            self.width = math.max(combined_button_length + context.horizontal_padding, self.width);
 
             const max_button_height = blk: {
                 var height: u31 = 0;
-                if (wayland_context.ok != null and wayland_context.ok.?.height > height) height = wayland_context.ok.?.height + 2 * button_padding;
-                if (wayland_context.notok != null and wayland_context.notok.?.height > height) height = wayland_context.notok.?.height + 2 * button_padding;
-                if (wayland_context.cancel != null and wayland_context.cancel.?.height > height) height = wayland_context.cancel.?.height + 2 * button_padding;
+                if (wayland_context.ok != null and wayland_context.ok.?.height > height) height = wayland_context.ok.?.height + 2 * context.button_inner_padding;
+                if (wayland_context.notok != null and wayland_context.notok.?.height > height) height = wayland_context.notok.?.height + 2 * context.button_inner_padding;
+                if (wayland_context.cancel != null and wayland_context.cancel.?.height > height) height = wayland_context.cancel.?.height + 2 * context.button_inner_padding;
                 break :blk height;
             };
-            if (max_button_height > 0) self.height += max_button_height + widget_padding;
+            if (max_button_height > 0) self.height += max_button_height + context.vertical_padding;
         }
     }
 
@@ -428,7 +429,7 @@ const Surface = struct {
 
         self.drawBackground(image, self.width, self.height);
 
-        var Y: u31 = widget_padding;
+        var Y: u31 = context.vertical_padding;
         if (wayland_context.title) |title| {
             const X = @divFloor(self.width, 2) -| @divFloor(title.width, 2);
             Y += try title.draw(image, &context.text_colour, X, Y);
@@ -443,8 +444,7 @@ const Surface = struct {
                 const X = @divFloor(self.width, 2) -| @divFloor(prompt.width, 2);
                 Y += try prompt.draw(image, &context.text_colour, X, Y);
             }
-            self.drawPinarea(image, 16, try util.unicodeLen(wayland_context.pin.slice()), Y);
-            Y += 40 + widget_padding; // TODO do not hardcode pinarea size;
+            Y += self.drawPinarea(image, try util.unicodeLen(wayland_context.pin.slice()), Y);
         }
 
         if (wayland_context.errmessage) |errmessage| {
@@ -456,55 +456,55 @@ const Surface = struct {
         {
             const combined_button_length = blk: {
                 var len: u31 = 0;
-                if (wayland_context.ok) |ok| len += ok.width + widget_padding + 2 * button_padding;
-                if (wayland_context.notok) |notok| len += notok.width + widget_padding + 2 * button_padding;
-                if (wayland_context.cancel) |cancel| len += cancel.width + widget_padding + 2 * button_padding;
+                if (wayland_context.ok) |ok| len += ok.width + context.horizontal_padding + 2 * context.button_inner_padding;
+                if (wayland_context.notok) |notok| len += notok.width + context.horizontal_padding + 2 * context.button_inner_padding;
+                if (wayland_context.cancel) |cancel| len += cancel.width + context.horizontal_padding + 2 * context.button_inner_padding;
                 break :blk len;
             };
-            var X: u31 = @divFloor(self.width + widget_padding, 2) -| @divFloor(combined_button_length, 2);
+            var X: u31 = @divFloor(self.width + context.horizontal_padding, 2) -| @divFloor(combined_button_length, 2);
             if (wayland_context.cancel) |cancel| {
                 borderedRectangle(
                     image,
                     X,
                     Y,
-                    cancel.width + 2 * button_padding,
-                    cancel.height + 2 * button_padding,
-                    1,
+                    cancel.width + 2 * context.button_inner_padding,
+                    cancel.height + 2 * context.button_inner_padding,
+                    context.button_border,
                     self.scale,
                     &context.cancel_button_background_colour,
                     &context.border_colour,
                 );
-                _ = try cancel.draw(image, &context.text_colour, X + button_padding, Y + button_padding);
-                X += cancel.width + 2 * button_padding + widget_padding;
+                _ = try cancel.draw(image, &context.text_colour, X + context.button_inner_padding, Y + context.button_inner_padding);
+                X += cancel.width + 2 * context.button_inner_padding + context.horizontal_padding;
             }
             if (wayland_context.notok) |notok| {
                 borderedRectangle(
                     image,
                     X,
                     Y,
-                    notok.width + 2 * button_padding,
-                    notok.height + 2 * button_padding,
-                    1,
+                    notok.width + 2 * context.button_inner_padding,
+                    notok.height + 2 * context.button_inner_padding,
+                    context.button_border,
                     self.scale,
                     &context.notok_button_background_colour,
                     &context.border_colour,
                 );
-                _ = try notok.draw(image, &context.text_colour, X + button_padding, Y + button_padding);
-                X += notok.width + 2 * button_padding + widget_padding;
+                _ = try notok.draw(image, &context.text_colour, X + context.button_inner_padding, Y + context.button_inner_padding);
+                X += notok.width + 2 * context.button_inner_padding + context.horizontal_padding;
             }
             if (wayland_context.ok) |ok| {
                 borderedRectangle(
                     image,
                     X,
                     Y,
-                    ok.width + 2 * button_padding,
-                    ok.height + 2 * button_padding,
-                    1,
+                    ok.width + 2 * context.button_inner_padding,
+                    ok.height + 2 * context.button_inner_padding,
+                    context.button_border,
                     self.scale,
                     &context.ok_button_background_colour,
                     &context.border_colour,
                 );
-                _ = try ok.draw(image, &context.text_colour, X + button_padding, Y + button_padding);
+                _ = try ok.draw(image, &context.text_colour, X + context.button_inner_padding, Y + context.button_inner_padding);
             }
         }
 
@@ -516,16 +516,13 @@ const Surface = struct {
     }
 
     fn drawBackground(self: *Surface, image: *pixman.Image, width: u31, height: u31) void {
-        borderedRectangle(image, 0, 0, width, height, 2, self.scale, &context.background_colour, &context.border_colour);
+        borderedRectangle(image, 0, 0, width, height, context.border, self.scale, &context.background_colour, &context.border_colour);
     }
 
-    fn drawPinarea(self: *Surface, image: *pixman.Image, capacity: u31, len: usize, pinarea_y: u31) void {
-        // TODO if capacity would overflow, reduce it
-        const square_size = 20;
-        const square_padding = @divExact(square_size, 2);
-        const square_halfpadding = @divExact(square_padding, 2);
-        const pinarea_height = square_size + 2 * square_padding;
-        const pinarea_width = capacity * (square_size + 2 * square_halfpadding) + 2 * square_halfpadding;
+    fn drawPinarea(self: *Surface, image: *pixman.Image, len: usize, pinarea_y: u31) u31 {
+        const square_padding = @divFloor(context.pin_square_size, 2);
+        const pinarea_height = context.pin_square_size + 2 * square_padding;
+        const pinarea_width = context.pin_square_amount * (context.pin_square_size + square_padding) + square_padding;
         const pinarea_x = @divFloor(self.width, 2) - @divFloor(pinarea_width, 2);
 
         borderedRectangle(
@@ -534,28 +531,30 @@ const Surface = struct {
             pinarea_y,
             pinarea_width,
             pinarea_height,
-            2,
+            context.border,
             self.scale,
             &context.pinarea_background_colour,
             &context.pinarea_border_colour,
         );
 
         var i: usize = 0;
-        while (i < len and i < capacity) : (i += 1) {
-            const x = @intCast(u31, pinarea_x + i * square_size + (i + 1) * square_padding);
+        while (i < len and i < context.pin_square_amount) : (i += 1) {
+            const x = @intCast(u31, pinarea_x + (i * context.pin_square_size) + ((i + 1) * square_padding));
             const y = pinarea_y + square_padding;
             borderedRectangle(
                 image,
                 x,
                 y,
-                square_size,
-                square_size,
-                1,
+                context.pin_square_size,
+                context.pin_square_size,
+                context.pin_square_border,
                 self.scale,
                 &context.pinarea_square_colour,
                 &context.pinarea_border_colour,
             );
         }
+
+        return pinarea_height + context.vertical_padding;
     }
 
     fn borderedRectangle(
@@ -736,11 +735,11 @@ pub const WaylandContext = struct {
         defer if (self.errmessage) |errmessage| errmessage.deinit();
         if (context.prompt) |prompt| self.prompt = try TextView.new(mem.trim(u8, prompt, &ascii.spaces), font_large);
         defer if (self.prompt) |prompt| prompt.deinit();
-        if (context.ok) |ok| self.ok = try TextView.new(mem.trim(u8, ok, &ascii.spaces), font_large);
+        if (context.ok) |ok| self.ok = try TextView.new(mem.trim(u8, ok, &ascii.spaces), font_regular);
         defer if (self.ok) |ok| ok.deinit();
-        if (context.notok) |notok| self.notok = try TextView.new(mem.trim(u8, notok, &ascii.spaces), font_large);
+        if (context.notok) |notok| self.notok = try TextView.new(mem.trim(u8, notok, &ascii.spaces), font_regular);
         defer if (self.notok) |notok| notok.deinit();
-        if (context.cancel) |cancel| self.cancel = try TextView.new(mem.trim(u8, cancel, &ascii.spaces), font_large);
+        if (context.cancel) |cancel| self.cancel = try TextView.new(mem.trim(u8, cancel, &ascii.spaces), font_regular);
         defer if (self.cancel) |cancel| cancel.deinit();
 
         const wayland_display = blk: {

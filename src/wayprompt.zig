@@ -38,6 +38,15 @@ const Context = struct {
     notok: ?[]const u8 = null,
     cancel: ?[]const u8 = null,
 
+    vertical_padding: u31 = 10,
+    horizontal_padding: u31 = 15,
+    button_inner_padding: u31 = 5,
+    pin_square_size: u31 = 18,
+    pin_square_amount: u31 = 16,
+    pin_square_border: u31 = 1,
+    button_border: u31 = 1,
+    border: u31 = 1,
+
     // We may not have WAYLAND_DISPLAY in our env when we get started, or maybe
     // even a bad one. However the gpg-agent will likely send us its own.
     wayland_display: ?[:0]const u8 = null,
@@ -147,7 +156,7 @@ fn parseConfig() !void {
     const file = try fs.cwd().openFile(path, .{});
     defer file.close();
 
-    const Section = enum { none, colours };
+    const Section = enum { none, general, colours };
     var section: Section = .none;
 
     var buffer = std.io.bufferedReader(file.reader());
@@ -175,6 +184,14 @@ fn parseConfig() !void {
                     log.err("{s}:{}: Assignments must be part of a section.", .{ path, line });
                     return error.BadConfig;
                 },
+                .general => assignGeneral(as.variable, as.value) catch |err| {
+                    switch (err) {
+                        error.BadInt => log.err("{s}:{}: Invalid unsigned integer: '{s}'", .{ path, line, as.value }),
+                        else => log.err("{s}:{}: Error: '{s}' = '{s}': {}", .{ path, line, as.variable, as.value, err }),
+                    }
+                    return error.BadConfig;
+                },
+
                 .colours => assignColour(as.variable, as.value) catch |err| {
                     switch (err) {
                         error.BadColour => log.err("{s}:{}: Bad colour: '{s}'", .{ path, line, as.value }),
@@ -185,6 +202,26 @@ fn parseConfig() !void {
                 },
             },
         }
+    }
+}
+
+fn assignGeneral(variable: []const u8, value: []const u8) !void {
+    if (mem.eql(u8, variable, "vertical-padding")) {
+        context.vertical_padding = fmt.parseInt(u31, value, 10) catch return error.BadInt;
+    } else if (mem.eql(u8, variable, "horizontal-padding")) {
+        context.horizontal_padding = fmt.parseInt(u31, value, 10) catch return error.BadInt;
+    } else if (mem.eql(u8, variable, "button-inner-padding")) {
+        context.button_inner_padding = fmt.parseInt(u31, value, 10) catch return error.BadInt;
+    } else if (mem.eql(u8, variable, "pin-square-size")) {
+        context.pin_square_size = fmt.parseInt(u31, value, 10) catch return error.BadInt;
+    } else if (mem.eql(u8, variable, "pin-square-amount")) {
+        context.pin_square_amount = fmt.parseInt(u31, value, 10) catch return error.BadInt;
+    } else if (mem.eql(u8, variable, "pin-square-border")) {
+        context.pin_square_border = fmt.parseInt(u31, value, 10) catch return error.BadInt;
+    } else if (mem.eql(u8, variable, "button-border")) {
+        context.button_border = fmt.parseInt(u31, value, 10) catch return error.BadInt;
+    } else if (mem.eql(u8, variable, "border")) {
+        context.border = fmt.parseInt(u31, value, 10) catch return error.BadInt;
     }
 }
 
