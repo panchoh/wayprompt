@@ -76,38 +76,32 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
     var it = mem.tokenize(u8, line, &ascii.spaces);
     const command = it.next() orelse return;
     if (ascii.eqlIgnoreCase(command, "settitle")) {
-        if (context.title) |p| {
-            context.title = null;
-            alloc.free(p);
-        }
-        if (it.next()) |_| context.title = try pinentryDupe(line["settitle ".len..]);
-        try writer.writeAll("OK\n");
+        try setString(writer, "title", line["settitle".len..]);
     } else if (ascii.eqlIgnoreCase(command, "setprompt")) {
-        if (context.prompt) |p| {
-            context.prompt = null;
-            alloc.free(p);
-        }
-        if (it.next()) |_| context.prompt = try pinentryDupe(line["setprompt ".len..]);
-        try writer.writeAll("OK\n");
+        try setString(writer, "prompt", line["setprompt".len..]);
     } else if (ascii.eqlIgnoreCase(command, "setdesc")) {
-        if (context.description) |d| {
-            context.description = null;
-            alloc.free(d);
-        }
-        if (it.next()) |_| context.description = try pinentryDupe(line["setdesc ".len..]);
-        try writer.writeAll("OK\n");
+        try setString(writer, "description", line["setdesc".len..]);
     } else if (ascii.eqlIgnoreCase(command, "seterror")) {
-        if (context.errmessage) |e| {
-            context.errmessage = null;
-            alloc.free(e);
-        }
-        if (it.next()) |_| context.errmessage = try pinentryDupe(line["seterror ".len..]);
-        try writer.writeAll("OK\n");
+        try setString(writer, "errmessage", line["seterror".len..]);
+    } else if (ascii.eqlIgnoreCase(command, "setok")) {
+        try setString(writer, "ok", line["setok ".len..]);
+    } else if (ascii.eqlIgnoreCase(command, "setnotok")) {
+        try setString(writer, "notok", line["setnotok ".len..]);
+    } else if (ascii.eqlIgnoreCase(command, "setcancel")) {
+        try setString(writer, "cancel", line["setcancel ".len..]);
     } else if (ascii.eqlIgnoreCase(command, "getpin")) {
         // TODO it's possible that the gpg-apgent requests us to ask for the
         //      pin twice (f.e. when the user creates a new one, I imagine).
         //      This needs support in the UI.
-        const pin = wayland.run(.getpin) catch |err| {
+        if (wayland.run(.getpin)) |pin| {
+            if (pin) |p| {
+                defer alloc.free(p);
+                try writer.print("D {s}\nEND\nOK\n", .{p});
+            } else {
+                // Sending no pin is also a valid response.
+                try writer.writeAll("OK\n");
+            }
+        } else |err| {
             // The client will ignore all messages starting with #, however they
             // should still be logged by the gpg-agent, given that the right
             // debug options are enabled. This means we can use this to insert
@@ -123,14 +117,6 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
                 try writer.print("# Error: {s}\n", .{@errorName(err)});
             }
             try writer.writeAll("ERR 83886179 Operation cancelled\n");
-            return;
-        };
-        if (pin) |p| {
-            defer alloc.free(p);
-            try writer.print("D {s}\nEND\nOK\n", .{p});
-        } else {
-            // Sending no pin is also a valid response.
-            try writer.writeAll("OK\n");
         }
 
         // The errormessage must automatically reset after every GETPIN or
@@ -140,13 +126,21 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
             context.errmessage = null;
         }
     } else if (ascii.eqlIgnoreCase(command, "confirm")) {
-        // TODO XXX Wayland widget
         // TODO this can optionally have the "--one-button" option, in which
         //      case it effectively functions like MESSAGE.
-        try writer.writeAll("OK\n");
-
-        // TODO Message when notok button is clicked: "ERR 83886194 not confirmed"
-        // TODO Message when cancel button is clicked: "ERR 83886179 cancelled"
+        if (wayland.run(.confirm)) |ret| {
+            debug.assert(ret == null);
+            try writer.writeAll("OK\n");
+        } else |err| {
+            switch (err) {
+                error.UserAbort => try writer.writeAll("ERR 83886179 cancelled\n"),
+                error.UserNotOk => try writer.writeAll("ERR 83886194 not confirmed\n"),
+                else => {
+                    try writer.print("# Error: {s}\n", .{@errorName(err)});
+                    try writer.writeAll("ERR 83886179 cancelled\n");
+                },
+            }
+        }
 
         // The errormessage must automatically reset after every GETPIN or
         // CONFIRM action.
@@ -155,17 +149,15 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
             context.errmessage = null;
         }
     } else if (ascii.eqlIgnoreCase(command, "message")) {
-        if (context.title != null or
-            context.description != null or
-            context.errmessage != null)
-        {
-            if (wayland.run(.message)) |ret| {
-                debug.assert(ret == null);
-            } else |err| {
-                try writer.print("# Error: {s}\n", .{@errorName(err)});
-            }
+        if (context.title == null and context.description == null and context.errmessage == null) {
+            return;
+        } else if (wayland.run(.message)) |ret| {
+            debug.assert(ret == null);
+            try writer.writeAll("OK\n");
+        } else |err| {
+            try writer.print("# Error: {s}\n", .{@errorName(err)});
+            try writer.writeAll("ERR 83886179 cancelled\n");
         }
-        try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "getinfo")) {
         if (it.next()) |info| {
             if (ascii.eqlIgnoreCase(info, "flavor")) {
@@ -209,12 +201,6 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
         // requests) because the gpg-agent will then abort. So let's just
         // pretend we accept this value and silently ignore it.
         try writer.writeAll("OK\n");
-    } else if (ascii.eqlIgnoreCase(command, "setok") or
-        ascii.eqlIgnoreCase(command, "setnotok") or // TODO if this is set, a third button should be displayed, which returns a different error than cancel
-        ascii.eqlIgnoreCase(command, "setcancel"))
-    {
-        // TODO implement?
-        try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "cancel") or
         ascii.eqlIgnoreCase(command, "setgenpin") or // Undocumented, but present in "default" pinentry.
         ascii.eqlIgnoreCase(command, "setgenpin_tt") or // Undocumented, but present in "default" pinentry.
@@ -254,6 +240,16 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
     } else {
         try writer.writeAll("ERR 536871187 Unknown IPC command\n");
     }
+}
+
+fn setString(writer: anytype, comptime name: []const u8, value: []const u8) !void {
+    const alloc = context.gpa.allocator();
+    if (@field(context.*, name)) |f| {
+        @field(context.*, name) = null;
+        alloc.free(f);
+    }
+    @field(context.*, name) = try pinentryDupe(value);
+    try writer.writeAll("OK\n");
 }
 
 /// Some characters are escaped in assuan messages.

@@ -26,11 +26,17 @@ const Context = struct {
     pinarea_background_colour: pixman.Color = pixmanColourFromRGB("0xd0d0d0") catch @compileError("Bad colour!"),
     pinarea_border_colour: pixman.Color = pixmanColourFromRGB("0x000000") catch @compileError("Bad colour!"),
     pinarea_square_colour: pixman.Color = pixmanColourFromRGB("0x808080") catch @compileError("Bad colour!"),
+    ok_button_background_colour: pixman.Color = pixmanColourFromRGB("0xd5f200") catch @compileError("Bad colour!"),
+    notok_button_background_colour: pixman.Color = pixmanColourFromRGB("0xffe53e") catch @compileError("Bad colour!"),
+    cancel_button_background_colour: pixman.Color = pixmanColourFromRGB("0xff4647") catch @compileError("Bad colour!"),
 
     title: ?[]const u8 = null,
     prompt: ?[]const u8 = null,
     description: ?[]const u8 = null,
     errmessage: ?[]const u8 = null,
+    ok: ?[]const u8 = null,
+    notok: ?[]const u8 = null,
+    cancel: ?[]const u8 = null,
 
     // We may not have WAYLAND_DISPLAY in our env when we get started, or maybe
     // even a bad one. However the gpg-agent will likely send us its own.
@@ -54,6 +60,18 @@ const Context = struct {
         if (self.errmessage) |t| {
             alloc.free(t);
             self.errmessage = null;
+        }
+        if (self.ok) |t| {
+            alloc.free(t);
+            self.ok = null;
+        }
+        if (self.notok) |t| {
+            alloc.free(t);
+            self.notok = null;
+        }
+        if (self.cancel) |t| {
+            alloc.free(t);
+            self.cancel = null;
         }
         if (self.wayland_display) |t| {
             alloc.free(t);

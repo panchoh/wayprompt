@@ -20,6 +20,7 @@ const util = @import("util.zig");
 const context = &@import("wayprompt.zig").context;
 
 const widget_padding = 10;
+const button_padding = 5;
 
 // Copied and adapted from https://git.sr.ht/~novakane/zelbar, same license.
 const TextView = struct {
@@ -36,6 +37,8 @@ const TextView = struct {
     height: u31,
 
     pub fn new(str: []const u8, font: *fcft.Font) !TextView {
+        if (str.len == 0) return error.EmptyString;
+
         var height = @intCast(u31, font.height);
 
         const alloc = context.gpa.allocator();
@@ -262,7 +265,7 @@ const Seat = struct {
                         return;
                     },
                     xkb.Keysym.BackSpace => {
-                        if (!wayland_context.readingInput()) return;
+                        if (wayland_context.mode != .getpin) return;
                         // TODO to properly delete inputs, we need a codepoint
                         //      buffer (u21). Probably just copy the one from
                         //      nfm.
@@ -270,7 +273,7 @@ const Seat = struct {
                         return;
                     },
                     xkb.Keysym.Delete => {
-                        if (!wayland_context.readingInput()) return;
+                        if (wayland_context.mode != .getpin) return;
                         wayland_context.pin = .{ .buffer = undefined, .len = 0 };
                         wayland_context.surface.?.render() catch wayland_context.abort(error.OutOfMemory);
                         return;
@@ -281,7 +284,7 @@ const Seat = struct {
                     },
                     else => {},
                 }
-                if (!wayland_context.readingInput()) return;
+                if (wayland_context.mode != .getpin) return;
                 {
                     @setRuntimeSafety(true);
                     const used = self.xkb_state.?.keyGetUtf8(keycode, wayland_context.pin.unusedCapacitySlice());
@@ -304,6 +307,7 @@ const Surface = struct {
     configured: bool = false,
     width: u31 = undefined,
     height: u31 = undefined,
+    horizontal_buttons: bool = true,
 
     scale: u31 = 1, // TODO we need to bind outputs for this and have a wl_seat listener
 
@@ -328,13 +332,43 @@ const Surface = struct {
     fn calculateSize(self: *Surface) void {
         self.width = 600;
         self.height = widget_padding;
-        if (wayland_context.readingInput()) {
+        if (wayland_context.mode == .getpin) {
             if (wayland_context.prompt) |prompt| self.height += prompt.height + widget_padding;
             self.height += 40 + widget_padding; // TODO don't hardcode pinarea height
         }
         if (wayland_context.title) |title| self.height += title.height + widget_padding;
         if (wayland_context.description) |description| self.height += description.height + widget_padding;
         if (wayland_context.errmessage) |errmessage| self.height += errmessage.height + widget_padding;
+
+        // Do all buttons plus padding fit on a single line?
+        // (Yes, these calculations technically have one widget_padding too many,
+        // send a patch if it annoys you.)
+        const combined_button_length = blk: {
+            var len: u31 = 0;
+            if (wayland_context.ok) |ok| len += ok.width + widget_padding + 2 * button_padding;
+            if (wayland_context.notok) |notok| len += notok.width + widget_padding + 2 * button_padding;
+            if (wayland_context.cancel) |cancel| len += cancel.width + widget_padding + 2 * button_padding;
+            break :blk len;
+        };
+        if (combined_button_length == 0) {
+            debug.assert(wayland_context.ok == null and wayland_context.notok == null and wayland_context.cancel == null);
+        } else if (combined_button_length > self.width -| 2 *| widget_padding) {
+            self.horizontal_buttons = false;
+            if (wayland_context.ok) |ok| self.height += ok.height + widget_padding + 2 * button_padding;
+            if (wayland_context.notok) |notok| self.height += notok.height + widget_padding + 2 * button_padding;
+            if (wayland_context.cancel) |cancel| self.height += cancel.height + widget_padding + 2 * button_padding;
+        } else {
+            self.horizontal_buttons = true;
+            const max_button_height = blk: {
+                var height: u31 = 0;
+                if (wayland_context.ok != null and wayland_context.ok.?.height > height) height = wayland_context.ok.?.height + 2 * button_padding;
+                if (wayland_context.notok != null and wayland_context.notok.?.height > height) height = wayland_context.notok.?.height + 2 * button_padding;
+                if (wayland_context.cancel != null and wayland_context.cancel.?.height > height) height = wayland_context.cancel.?.height + 2 * button_padding;
+                break :blk height;
+            };
+            debug.assert(max_button_height > 0);
+            self.height += max_button_height + widget_padding;
+        }
     }
 
     pub fn deinit(self: *const Surface) void {
@@ -371,13 +405,113 @@ const Surface = struct {
         if (wayland_context.title) |title| Y += try title.draw(image, &context.text_colour, widget_padding, Y);
         if (wayland_context.description) |description| Y += try description.draw(image, &context.text_colour, widget_padding, Y);
 
-        if (wayland_context.readingInput()) {
+        if (wayland_context.mode == .getpin) {
             if (wayland_context.prompt) |prompt| Y += try prompt.draw(image, &context.text_colour, widget_padding, Y);
             self.drawPinarea(image, 16, try util.unicodeLen(wayland_context.pin.slice()), Y);
             Y += 40 + widget_padding; // TODO do not hardcode pinarea size;
         }
 
         if (wayland_context.errmessage) |errmessage| Y += try errmessage.draw(image, &context.error_text_colour, widget_padding, Y);
+
+        // Buttons
+        if (self.horizontal_buttons) {
+            const combined_button_length = blk: {
+                var len: u31 = 0;
+                if (wayland_context.ok) |ok| len += ok.width + widget_padding + 2 * button_padding;
+                if (wayland_context.notok) |notok| len += notok.width + widget_padding + 2 * button_padding;
+                if (wayland_context.cancel) |cancel| len += cancel.width + widget_padding + 2 * button_padding;
+                break :blk len;
+            };
+            debug.assert(combined_button_length <= self.width - 2 * widget_padding);
+            var X: u31 = @divFloor(self.width, 2) - @divFloor(combined_button_length, 2);
+            if (wayland_context.cancel) |cancel| {
+                borderedRectangle(
+                    image,
+                    X,
+                    Y,
+                    cancel.width + 2 * button_padding,
+                    cancel.height + 2 * button_padding,
+                    1,
+                    self.scale,
+                    &context.cancel_button_background_colour,
+                    &context.border_colour,
+                );
+                _ = try cancel.draw(image, &context.text_colour, X + button_padding, Y + button_padding);
+                X += cancel.width + 2 * button_padding + widget_padding;
+            }
+            if (wayland_context.notok) |notok| {
+                borderedRectangle(
+                    image,
+                    X,
+                    Y,
+                    notok.width + 2 * button_padding,
+                    notok.height + 2 * button_padding,
+                    1,
+                    self.scale,
+                    &context.notok_button_background_colour,
+                    &context.border_colour,
+                );
+                _ = try notok.draw(image, &context.text_colour, X + button_padding, Y + button_padding);
+                X += notok.width + 2 * button_padding + widget_padding;
+            }
+            if (wayland_context.ok) |ok| {
+                borderedRectangle(
+                    image,
+                    X,
+                    Y,
+                    ok.width + 2 * button_padding,
+                    ok.height + 2 * button_padding,
+                    1,
+                    self.scale,
+                    &context.ok_button_background_colour,
+                    &context.border_colour,
+                );
+                _ = try ok.draw(image, &context.text_colour, X + button_padding, Y + button_padding);
+            }
+        } else {
+            if (wayland_context.ok) |ok| {
+                borderedRectangle(
+                    image,
+                    widget_padding,
+                    Y,
+                    ok.width + 2 * button_padding,
+                    ok.height + 2 * button_padding,
+                    1,
+                    self.scale,
+                    &context.ok_button_background_colour,
+                    &context.border_colour,
+                );
+                Y += (try ok.draw(image, &context.text_colour, widget_padding + button_padding, Y + button_padding)) + 2 * button_padding;
+            }
+            if (wayland_context.notok) |notok| {
+                borderedRectangle(
+                    image,
+                    widget_padding,
+                    Y,
+                    notok.width + 2 * button_padding,
+                    notok.height + 2 * button_padding,
+                    1,
+                    self.scale,
+                    &context.notok_button_background_colour,
+                    &context.border_colour,
+                );
+                Y += (try notok.draw(image, &context.text_colour, widget_padding + button_padding, Y + button_padding)) + 2 * button_padding;
+            }
+            if (wayland_context.cancel) |cancel| {
+                borderedRectangle(
+                    image,
+                    widget_padding,
+                    Y,
+                    cancel.width + 2 * button_padding,
+                    cancel.height + 2 * button_padding,
+                    1,
+                    self.scale,
+                    &context.cancel_button_background_colour,
+                    &context.border_colour,
+                );
+                Y += (try cancel.draw(image, &context.text_colour, widget_padding + button_padding, Y + button_padding)) + 2 * button_padding;
+            }
+        }
 
         self.wl_surface.setBufferScale(self.scale);
         self.wl_surface.attach(buffer.*.wl_buffer.?, 0, 0);
@@ -561,6 +695,9 @@ pub const WaylandContext = struct {
     description: ?TextView = null,
     prompt: ?TextView = null,
     errmessage: ?TextView = null,
+    ok: ?TextView = null,
+    notok: ?TextView = null,
+    cancel: ?TextView = null,
 
     layer_shell: ?*zwlr.LayerShellV1 = null,
     compositor: ?*wl.Compositor = null,
@@ -604,6 +741,12 @@ pub const WaylandContext = struct {
         defer if (self.errmessage) |errmessage| errmessage.deinit();
         if (context.prompt) |prompt| self.prompt = try TextView.new(mem.trim(u8, prompt, &ascii.spaces), font_large);
         defer if (self.prompt) |prompt| prompt.deinit();
+        if (context.ok) |ok| self.ok = try TextView.new(mem.trim(u8, ok, &ascii.spaces), font_large);
+        defer if (self.ok) |ok| ok.deinit();
+        if (context.notok) |notok| self.notok = try TextView.new(mem.trim(u8, notok, &ascii.spaces), font_large);
+        defer if (self.notok) |notok| notok.deinit();
+        if (context.cancel) |cancel| self.cancel = try TextView.new(mem.trim(u8, cancel, &ascii.spaces), font_large);
+        defer if (self.cancel) |cancel| cancel.deinit();
 
         const wayland_display = blk: {
             if (context.wayland_display) |wd| break :blk wd;
@@ -654,17 +797,13 @@ pub const WaylandContext = struct {
             return reason;
         }
 
-        if (self.readingInput() and self.pin.len > 0) {
+        if (mode == .getpin and self.pin.len > 0) {
             const alloc = context.gpa.allocator();
             const pin = try alloc.dupe(u8, self.pin.slice());
             return pin;
         } else {
             return null;
         }
-    }
-
-    pub fn readingInput(self: WaylandContext) bool {
-        return self.mode == .getpin;
     }
 
     fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, self: *WaylandContext) void {
