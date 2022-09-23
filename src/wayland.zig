@@ -461,7 +461,7 @@ const Surface = struct {
                 if (wayland_context.cancel) |cancel| len += cancel.width + widget_padding + 2 * button_padding;
                 break :blk len;
             };
-            var X: u31 = @divFloor(self.width, 2) -| @divFloor(combined_button_length, 2);
+            var X: u31 = @divFloor(self.width + widget_padding, 2) -| @divFloor(combined_button_length, 2);
             if (wayland_context.cancel) |cancel| {
                 borderedRectangle(
                     image,
