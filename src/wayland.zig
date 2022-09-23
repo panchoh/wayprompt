@@ -56,16 +56,27 @@ const TextView = struct {
 
         if ((fcft.capabilities() & fcft.Capabilities.text_run_shaping) != 0) {
             const text_run = try font.rasterizeTextRunUtf32(codepoints, .default);
-            var width: u31 = 0;
             var i: usize = 0;
+            var width: u31 = 0;
+            var max_width: u31 = 0;
             while (i < text_run.count) : (i += 1) {
-                width += @intCast(u31, text_run.glyphs[i].advance.x);
+                if (text_run.glyphs[i].cp == '\n') {
+                    if (width > max_width) {
+                        max_width = width;
+                    }
+                    width = 0;
+                } else {
+                    width += @intCast(u31, text_run.glyphs[i].advance.x);
+                }
+            }
+            if (width > max_width) {
+                max_width = width;
             }
 
             return TextView{
                 .mode = .{ .text_run = text_run },
                 .font = font,
-                .width = width,
+                .width = max_width,
                 .height = height,
             };
         } else {
@@ -76,6 +87,7 @@ const TextView = struct {
 
             var i: usize = 0;
             var width: u31 = 0;
+            var max_width: u31 = 0;
             while (i < codepoints.len) : (i += 1) {
                 glyphs[i] = try font.rasterizeCharUtf32(codepoints[i], .default);
                 kerns[i] = 0;
@@ -83,7 +95,17 @@ const TextView = struct {
                     var x_kern: c_long = 0;
                     if (font.kerning(codepoints[i - 1], codepoints[i], &x_kern, null)) kerns[i] = x_kern;
                 }
-                width += @intCast(u31, kerns[i] + glyphs[i].advance.x);
+                if (glyphs[i].cp == '\n') {
+                    if (width > max_width) {
+                        max_width = width;
+                    }
+                    width = 0;
+                } else {
+                    width += @intCast(u31, kerns[i] + glyphs[i].advance.x);
+                }
+            }
+            if (width > max_width) {
+                max_width = width;
             }
 
             return TextView{
@@ -92,7 +114,7 @@ const TextView = struct {
                     .kerns = kerns,
                 } },
                 .font = font,
-                .width = width,
+                .width = max_width,
                 .height = height,
             };
         }
@@ -402,16 +424,28 @@ const Surface = struct {
         self.drawBackground(image, self.width, self.height);
 
         var Y: u31 = widget_padding;
-        if (wayland_context.title) |title| Y += try title.draw(image, &context.text_colour, widget_padding, Y);
-        if (wayland_context.description) |description| Y += try description.draw(image, &context.text_colour, widget_padding, Y);
+        if (wayland_context.title) |title| {
+            const X = @divFloor(self.width, 2) -| @divFloor(title.width, 2);
+            Y += try title.draw(image, &context.text_colour, X, Y);
+        }
+        if (wayland_context.description) |description| {
+            const X = @divFloor(self.width, 2) -| @divFloor(description.width, 2);
+            Y += try description.draw(image, &context.text_colour, X, Y);
+        }
 
         if (wayland_context.mode == .getpin) {
-            if (wayland_context.prompt) |prompt| Y += try prompt.draw(image, &context.text_colour, widget_padding, Y);
+            if (wayland_context.prompt) |prompt| {
+                const X = @divFloor(self.width, 2) -| @divFloor(prompt.width, 2);
+                Y += try prompt.draw(image, &context.text_colour, X, Y);
+            }
             self.drawPinarea(image, 16, try util.unicodeLen(wayland_context.pin.slice()), Y);
             Y += 40 + widget_padding; // TODO do not hardcode pinarea size;
         }
 
-        if (wayland_context.errmessage) |errmessage| Y += try errmessage.draw(image, &context.error_text_colour, widget_padding, Y);
+        if (wayland_context.errmessage) |errmessage| {
+            const X = @divFloor(self.width, 2) -| @divFloor(errmessage.width, 2);
+            Y += try errmessage.draw(image, &context.error_text_colour, X, Y);
+        }
 
         // Buttons
         if (self.horizontal_buttons) {
