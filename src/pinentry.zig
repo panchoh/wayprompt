@@ -150,6 +150,7 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
         }
     } else if (ascii.eqlIgnoreCase(command, "message")) {
         if (context.title == null and context.description == null and context.errmessage == null) {
+            try writer.writeAll("OK\n");
             return;
         } else if (wayland.run(.message)) |ret| {
             debug.assert(ret == null);

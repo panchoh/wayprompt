@@ -329,7 +329,6 @@ const Surface = struct {
     configured: bool = false,
     width: u31 = undefined,
     height: u31 = undefined,
-    horizontal_buttons: bool = true,
 
     scale: u31 = 1, // TODO we need to bind outputs for this and have a wl_seat listener
 
@@ -352,35 +351,42 @@ const Surface = struct {
     }
 
     fn calculateSize(self: *Surface) void {
-        self.width = 600;
         self.height = widget_padding;
-        if (wayland_context.mode == .getpin) {
-            if (wayland_context.prompt) |prompt| self.height += prompt.height + widget_padding;
-            self.height += 40 + widget_padding; // TODO don't hardcode pinarea height
-        }
-        if (wayland_context.title) |title| self.height += title.height + widget_padding;
-        if (wayland_context.description) |description| self.height += description.height + widget_padding;
-        if (wayland_context.errmessage) |errmessage| self.height += errmessage.height + widget_padding;
+        self.width = widget_padding;
 
-        // Do all buttons plus padding fit on a single line?
-        // (Yes, these calculations technically have one widget_padding too many,
-        // send a patch if it annoys you.)
-        const combined_button_length = blk: {
-            var len: u31 = 0;
-            if (wayland_context.ok) |ok| len += ok.width + widget_padding + 2 * button_padding;
-            if (wayland_context.notok) |notok| len += notok.width + widget_padding + 2 * button_padding;
-            if (wayland_context.cancel) |cancel| len += cancel.width + widget_padding + 2 * button_padding;
-            break :blk len;
-        };
-        if (combined_button_length == 0) {
-            debug.assert(wayland_context.ok == null and wayland_context.notok == null and wayland_context.cancel == null);
-        } else if (combined_button_length > self.width -| 2 *| widget_padding) {
-            self.horizontal_buttons = false;
-            if (wayland_context.ok) |ok| self.height += ok.height + widget_padding + 2 * button_padding;
-            if (wayland_context.notok) |notok| self.height += notok.height + widget_padding + 2 * button_padding;
-            if (wayland_context.cancel) |cancel| self.height += cancel.height + widget_padding + 2 * button_padding;
-        } else {
-            self.horizontal_buttons = true;
+        if (wayland_context.mode == .getpin) {
+            if (wayland_context.prompt) |prompt| {
+                self.width = math.max(prompt.width + 2 * widget_padding, self.width);
+                self.height += prompt.height + widget_padding;
+            }
+
+            self.height += 40 + widget_padding; // TODO don't hardcode pinarea height
+            self.width = math.max(self.width, 600); // TODO don't hardcode pinarea width
+        }
+
+        if (wayland_context.title) |title| {
+            self.width = math.max(title.width + 2 * widget_padding, self.width);
+            self.height += title.height + widget_padding;
+        }
+        if (wayland_context.description) |description| {
+            self.width = math.max(description.width + 2 * widget_padding, self.width);
+            self.height += description.height + widget_padding;
+        }
+        if (wayland_context.errmessage) |errmessage| {
+            self.width = math.max(errmessage.width + 2 * widget_padding, self.width);
+            self.height += errmessage.height + widget_padding;
+        }
+
+        {
+            const combined_button_length = blk: {
+                var len: u31 = 0;
+                if (wayland_context.ok) |ok| len += ok.width + widget_padding + 2 * button_padding;
+                if (wayland_context.notok) |notok| len += notok.width + widget_padding + 2 * button_padding;
+                if (wayland_context.cancel) |cancel| len += cancel.width + widget_padding + 2 * button_padding;
+                break :blk len;
+            };
+            self.width = math.max(combined_button_length + widget_padding, self.width);
+
             const max_button_height = blk: {
                 var height: u31 = 0;
                 if (wayland_context.ok != null and wayland_context.ok.?.height > height) height = wayland_context.ok.?.height + 2 * button_padding;
@@ -388,8 +394,7 @@ const Surface = struct {
                 if (wayland_context.cancel != null and wayland_context.cancel.?.height > height) height = wayland_context.cancel.?.height + 2 * button_padding;
                 break :blk height;
             };
-            debug.assert(max_button_height > 0);
-            self.height += max_button_height + widget_padding;
+            if (max_button_height > 0) self.height += max_button_height + widget_padding;
         }
     }
 
@@ -448,7 +453,7 @@ const Surface = struct {
         }
 
         // Buttons
-        if (self.horizontal_buttons) {
+        {
             const combined_button_length = blk: {
                 var len: u31 = 0;
                 if (wayland_context.ok) |ok| len += ok.width + widget_padding + 2 * button_padding;
@@ -456,8 +461,7 @@ const Surface = struct {
                 if (wayland_context.cancel) |cancel| len += cancel.width + widget_padding + 2 * button_padding;
                 break :blk len;
             };
-            debug.assert(combined_button_length <= self.width - 2 * widget_padding);
-            var X: u31 = @divFloor(self.width, 2) - @divFloor(combined_button_length, 2);
+            var X: u31 = @divFloor(self.width, 2) -| @divFloor(combined_button_length, 2);
             if (wayland_context.cancel) |cancel| {
                 borderedRectangle(
                     image,
@@ -501,49 +505,6 @@ const Surface = struct {
                     &context.border_colour,
                 );
                 _ = try ok.draw(image, &context.text_colour, X + button_padding, Y + button_padding);
-            }
-        } else {
-            if (wayland_context.ok) |ok| {
-                borderedRectangle(
-                    image,
-                    widget_padding,
-                    Y,
-                    ok.width + 2 * button_padding,
-                    ok.height + 2 * button_padding,
-                    1,
-                    self.scale,
-                    &context.ok_button_background_colour,
-                    &context.border_colour,
-                );
-                Y += (try ok.draw(image, &context.text_colour, widget_padding + button_padding, Y + button_padding)) + 2 * button_padding;
-            }
-            if (wayland_context.notok) |notok| {
-                borderedRectangle(
-                    image,
-                    widget_padding,
-                    Y,
-                    notok.width + 2 * button_padding,
-                    notok.height + 2 * button_padding,
-                    1,
-                    self.scale,
-                    &context.notok_button_background_colour,
-                    &context.border_colour,
-                );
-                Y += (try notok.draw(image, &context.text_colour, widget_padding + button_padding, Y + button_padding)) + 2 * button_padding;
-            }
-            if (wayland_context.cancel) |cancel| {
-                borderedRectangle(
-                    image,
-                    widget_padding,
-                    Y,
-                    cancel.width + 2 * button_padding,
-                    cancel.height + 2 * button_padding,
-                    1,
-                    self.scale,
-                    &context.cancel_button_background_colour,
-                    &context.border_colour,
-                );
-                Y += (try cancel.draw(image, &context.text_colour, widget_padding + button_padding, Y + button_padding)) + 2 * button_padding;
             }
         }
 
