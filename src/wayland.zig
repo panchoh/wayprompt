@@ -16,6 +16,7 @@ const wl = wayland.client.wl;
 const zwlr = wayland.client.zwlr;
 
 const util = @import("util.zig");
+const InputBuffer = @import("InputBuffer.zig");
 
 const context = &@import("wayprompt.zig").context;
 
@@ -284,30 +285,37 @@ const Seat = struct {
                         return;
                     },
                     xkb.Keysym.BackSpace => {
-                        if (wayland_context.mode != .getpin) return;
-                        // TODO to properly delete inputs, we need a codepoint
-                        //      buffer (u21). Probably just copy the one from
-                        //      nfm.
-                        wayland_context.surface.?.render() catch wayland_context.abort(error.OutOfMemory);
+                        if (wayland_context.pin) |*pin| {
+                            debug.assert(wayland_context.mode == .getpin);
+                            pin.*.delete(.left, 1);
+                            wayland_context.surface.?.render() catch wayland_context.abort(error.OutOfMemory);
+                        }
                         return;
                     },
-                    xkb.Keysym.Delete => {
-                        if (wayland_context.mode != .getpin) return;
-                        wayland_context.pin = .{ .buffer = undefined, .len = 0 };
-                        wayland_context.surface.?.render() catch wayland_context.abort(error.OutOfMemory);
-                        return;
-                    },
+                    xkb.Keysym.Delete => return,
                     xkb.Keysym.Escape => {
                         wayland_context.abort(error.UserAbort);
                         return;
                     },
                     else => {},
                 }
+
                 if (wayland_context.mode != .getpin) return;
+
                 {
                     @setRuntimeSafety(true);
-                    const used = self.xkb_state.?.keyGetUtf8(keycode, wayland_context.pin.unusedCapacitySlice());
-                    wayland_context.pin.resize(wayland_context.pin.len + used) catch wayland_context.abort(error.OutOfMemory);
+                    if (wayland_context.pin == null) {
+                        wayland_context.pin = InputBuffer.new(context.gpa.allocator()) catch {
+                            wayland_context.abort(error.OutOfMemory);
+                            return;
+                        };
+                    }
+                    var buffer: [16]u8 = undefined;
+                    const used = self.xkb_state.?.keyGetUtf8(keycode, &buffer);
+                    wayland_context.pin.?.insertUTF8Slice(buffer[0..used]) catch {
+                        wayland_context.abort(error.OutOfMemory);
+                        return;
+                    };
                 }
 
                 // We only get keyboard input when a surface exists.
@@ -444,7 +452,7 @@ const Surface = struct {
                 const X = @divFloor(self.width, 2) -| @divFloor(prompt.width, 2);
                 Y += try prompt.draw(image, &context.text_colour, X, Y);
             }
-            Y += self.drawPinarea(image, try util.unicodeLen(wayland_context.pin.slice()), Y);
+            Y += self.drawPinarea(image, if (wayland_context.pin) |pin| pin.buffer.items.len else 0, Y);
         }
 
         if (wayland_context.errmessage) |errmessage| {
@@ -705,10 +713,13 @@ pub const WaylandContext = struct {
     loop: bool = true,
     exit_reason: ?anyerror = null,
 
-    pin: std.BoundedArray(u8, 1024) = .{ .buffer = undefined, .len = 0 },
+    pin: ?InputBuffer = null,
 
     pub fn abort(self: *WaylandContext, reason: anyerror) void {
-        self.pin = .{ .buffer = undefined, .len = 0 };
+        if (self.pin) |*pin| {
+            pin.deinit();
+            self.pin = null;
+        }
         self.loop = false;
         self.exit_reason = reason;
     }
@@ -778,6 +789,9 @@ pub const WaylandContext = struct {
                 alloc.destroy(node);
             }
         }
+        errdefer {
+            if (self.pin) |*pin| pin.deinit();
+        }
 
         // Per pinentry protocol documentation, the client may not send us anything
         // while it is waiting for a data response. So it's fine to just jump into
@@ -787,15 +801,18 @@ pub const WaylandContext = struct {
         }
 
         if (self.exit_reason) |reason| {
-            debug.assert(self.pin.len == 0);
+            debug.assert(self.pin == null);
             return reason;
         }
 
-        if (mode == .getpin and self.pin.len > 0) {
-            const alloc = context.gpa.allocator();
-            const pin = try alloc.dupe(u8, self.pin.slice());
-            return pin;
+        if (mode == .getpin and self.pin != null) {
+            if (self.pin.?.buffer.items.len == 0) {
+                self.pin.?.deinit();
+                return null;
+            }
+            return try self.pin.?.toOwnedUtf8Slice();
         } else {
+            debug.assert(self.pin == null);
             return null;
         }
     }
