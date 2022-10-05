@@ -51,6 +51,7 @@ pub fn build(b: *zbs.Builder) !void {
     });
     wayprompt.linkLibC();
     wayprompt.linkSystemLibrary("wayland-client");
+    wayprompt.linkSystemLibrary("wayland-cursor");
 
     scanner.addCSource(wayprompt);
 

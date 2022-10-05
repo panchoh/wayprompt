@@ -20,6 +20,29 @@ const InputBuffer = @import("InputBuffer.zig");
 
 const context = &@import("wayprompt.zig").context;
 
+const HotSpot = struct {
+    const Effect = enum { cancel, ok, notok };
+
+    effect: Effect,
+    x: u31,
+    y: u31,
+    width: u31,
+    height: u31,
+
+    pub fn containsPoint(self: HotSpot, x: u31, y: u31) bool {
+        return x >= self.x and x <= self.x +| self.width and
+            y >= self.y and y <= self.y +| self.height;
+    }
+
+    pub fn act(self: HotSpot) void {
+        switch (self.effect) {
+            .cancel => wayland_context.abort(error.UserAbort),
+            .notok => wayland_context.abort(error.UserNotOk),
+            .ok => wayland_context.loop = false,
+        }
+    }
+};
+
 // Copied and adapted from https://git.sr.ht/~novakane/zelbar, same license.
 const TextView = struct {
     const Mode = union(enum) {
@@ -194,11 +217,23 @@ const TextView = struct {
 };
 
 const Seat = struct {
+    const CursorShape = enum { none, arrow, hand };
+
     wl_seat: *wl.Seat,
 
     // Keyboard related objects.
     wl_keyboard: ?*wl.Keyboard = null,
     xkb_state: ?*xkb.State = null,
+
+    // Pointer related objects.
+    wl_pointer: ?*wl.Pointer = null,
+    pointer_x: u31 = 0,
+    pointer_y: u31 = 0,
+    cursor_shape: CursorShape = .none,
+    cursor_theme: ?*wl.CursorTheme = null,
+    cursor_surface: ?*wl.Surface = null,
+    last_enter_serial: u32 = undefined,
+    press_hotspot: ?*HotSpot = null,
 
     pub fn init(self: *Seat, wl_seat: *wl.Seat) !void {
         self.* = .{ .wl_seat = wl_seat };
@@ -207,21 +242,145 @@ const Seat = struct {
 
     pub fn deinit(self: *Seat) void {
         self.releaseKeyboard();
+        self.releasePointer();
         self.wl_seat.destroy();
     }
 
     fn seatListener(_: *wl.Seat, event: wl.Seat.Event, self: *Seat) void {
         switch (event) {
             .capabilities => |ev| {
-                // TODO eventually also do pointer things, I guess.
                 if (ev.capabilities.keyboard) {
                     self.bindKeyboard() catch {};
                 } else {
                     self.releaseKeyboard();
                 }
+
+                if (ev.capabilities.pointer) {
+                    self.bindPointer() catch {};
+                } else {
+                    self.releasePointer();
+                }
+
+                // TODO touch
             },
             .name => {}, // Do I look like I care?
         }
+    }
+
+    fn bindPointer(self: *Seat) !void {
+        if (self.wl_pointer != null) return;
+        self.wl_pointer = try self.wl_seat.getPointer();
+        self.wl_pointer.?.setListener(*Seat, pointerListener, self);
+    }
+
+    fn releasePointer(self: *Seat) void {
+        self.cursor_shape = .none;
+        self.press_hotspot = null;
+        if (self.cursor_theme) |t| {
+            t.destroy();
+            self.cursor_theme = null;
+        }
+        if (self.cursor_surface) |s| {
+            s.destroy();
+            self.cursor_surface = null;
+        }
+        if (self.wl_pointer) |p| {
+            p.release();
+            self.wl_pointer = null;
+        }
+    }
+
+    fn pointerListener(_: *wl.Pointer, event: wl.Pointer.Event, self: *Seat) void {
+        _ = self;
+        switch (event) {
+            .enter => |ev| self.updatePointer(ev.surface_x, ev.surface_y, ev.serial),
+            .motion => |ev| self.updatePointer(ev.surface_x, ev.surface_y, null),
+            .button => |ev| {
+                // Only activating a button on release is the better UX, IMO.
+                switch (ev.state) {
+                    .pressed => self.press_hotspot = wayland_context.surface.?.hotspotFromPoint(self.pointer_x, self.pointer_y),
+                    .released => {
+                        if (self.press_hotspot == null) return;
+                        const release_hotspot = wayland_context.surface.?.hotspotFromPoint(self.pointer_x, self.pointer_y) orelse return;
+                        if (self.press_hotspot.? == release_hotspot) {
+                            release_hotspot.act();
+                        }
+                        self.press_hotspot = null;
+                    },
+                    else => {},
+                }
+            },
+            else => {},
+        }
+    }
+
+    fn updatePointer(self: *Seat, x: wl.Fixed, y: wl.Fixed, serial: ?u32) void {
+        const X = x.toInt();
+        self.pointer_x = if (X > 0) @intCast(u31, X) else 0;
+
+        const Y = y.toInt();
+        self.pointer_y = if (Y > 0) @intCast(u31, Y) else 0;
+
+        if (serial) |s| self.last_enter_serial = s;
+
+        // Sanity check.
+        debug.assert(self.wl_pointer != null);
+        debug.assert(wayland_context.surface != null);
+
+        // Cursor errors shall not be fatal. It's fairly expectable for
+        // something to go wrong there and it's not exactly vital to our
+        // operation here, so we can roll without setting the cursor.
+        if (wayland_context.surface.?.hotspotFromPoint(self.pointer_x, self.pointer_y) != null) {
+            self.setCursor(.hand) catch {};
+        } else {
+            self.setCursor(.arrow) catch {};
+        }
+    }
+
+    fn setCursor(self: *Seat, shape: CursorShape) !void {
+        if (self.cursor_shape == shape) return;
+
+        const name = switch (shape) {
+            .none => unreachable,
+            .arrow => "default",
+            .hand => "pointer",
+        };
+
+        const scale = 1; // TODO
+        const cursor_size = 24 * scale;
+
+        if (self.cursor_theme == null) {
+            self.cursor_theme = try wl.CursorTheme.load(null, cursor_size, wayland_context.shm.?);
+        }
+        errdefer {
+            self.cursor_theme.?.destroy();
+            self.cursor_theme = null;
+        }
+
+        // These just point back to the CursorTheme, no need to keep them.
+        const wl_cursor = self.cursor_theme.?.getCursor(name) orelse return error.NoCursor;
+        const cursor_image = wl_cursor.images[0]; // TODO Is this nullable? Not in the bindings, but they may be wrong.
+        const wl_buffer = try cursor_image.getBuffer();
+
+        if (self.cursor_surface == null) {
+            self.cursor_surface = try wayland_context.compositor.?.createSurface();
+        }
+        errdefer {
+            self.cursor_surface.?.destroy();
+            self.cursor_surface = null;
+        }
+
+        self.cursor_surface.?.setBufferScale(scale);
+        self.cursor_surface.?.attach(wl_buffer, 0, 0);
+        self.cursor_surface.?.damageBuffer(0, 0, math.maxInt(i31), math.maxInt(u31));
+        self.cursor_surface.?.commit();
+
+        self.wl_pointer.?.setCursor(
+            self.last_enter_serial,
+            self.cursor_surface.?,
+            @intCast(i32, @divFloor(cursor_image.hotspot_x, scale)),
+            @intCast(i32, @divFloor(cursor_image.hotspot_y, scale)),
+        );
     }
 
     fn bindKeyboard(self: *Seat) !void {
@@ -337,6 +496,9 @@ const Surface = struct {
 
     scale: u31 = 1, // TODO we need to bind outputs for this and have a wl_seat listener
 
+    /// Cursor / Touch hotspots, populated on first render.
+    hotspots: std.ArrayListUnmanaged(HotSpot) = .{},
+
     pub fn init(self: *Surface) !void {
         const wl_surface = try wayland_context.compositor.?.createSurface();
         errdefer wl_surface.destroy();
@@ -347,7 +509,7 @@ const Surface = struct {
             .wl_surface = wl_surface,
             .layer_surface = layer_surface,
         };
-        self.calculateSize();
+        try self.calculateSize();
 
         layer_surface.setListener(*Surface, layerSurfaceListener, self);
         layer_surface.setKeyboardInteractivity(.exclusive);
@@ -355,7 +517,7 @@ const Surface = struct {
         wl_surface.commit();
     }
 
-    fn calculateSize(self: *Surface) void {
+    fn calculateSize(self: *Surface) !void {
         self.height = context.vertical_padding;
         self.width = context.horizontal_padding;
 
@@ -387,29 +549,48 @@ const Surface = struct {
         }
 
         {
-            const combined_button_length = blk: {
-                var len: u31 = 0;
-                if (wayland_context.ok) |ok| len += ok.width + context.horizontal_padding + 2 * context.button_inner_padding;
-                if (wayland_context.notok) |notok| len += notok.width + context.horizontal_padding + 2 * context.button_inner_padding;
-                if (wayland_context.cancel) |cancel| len += cancel.width + context.horizontal_padding + 2 * context.button_inner_padding;
-                break :blk len;
-            };
+            var button_amount: u31 = 0;
+            var combined_button_length: u31 = 0;
+            var max_button_height: u31 = 0;
+
+            if (wayland_context.ok) |ok| {
+                button_amount += 1;
+                combined_button_length += ok.width + context.horizontal_padding + 2 * context.button_inner_padding;
+                max_button_height = math.max(max_button_height, ok.height + 2 * context.button_inner_padding);
+            }
+            if (wayland_context.notok) |notok| {
+                button_amount += 1;
+                combined_button_length += notok.width + context.horizontal_padding + 2 * context.button_inner_padding;
+                max_button_height = math.max(max_button_height, notok.height + 2 * context.button_inner_padding);
+            }
+            if (wayland_context.cancel) |cancel| {
+                button_amount += 1;
+                combined_button_length += cancel.width + context.horizontal_padding + 2 * context.button_inner_padding;
+                max_button_height = math.max(max_button_height, cancel.height + 2 * context.button_inner_padding);
+            }
+
             self.width = math.max(combined_button_length + context.horizontal_padding, self.width);
 
-            const max_button_height = blk: {
-                var height: u31 = 0;
-                if (wayland_context.ok != null and wayland_context.ok.?.height > height) height = wayland_context.ok.?.height + 2 * context.button_inner_padding;
-                if (wayland_context.notok != null and wayland_context.notok.?.height > height) height = wayland_context.notok.?.height + 2 * context.button_inner_padding;
-                if (wayland_context.cancel != null and wayland_context.cancel.?.height > height) height = wayland_context.cancel.?.height + 2 * context.button_inner_padding;
-                break :blk height;
-            };
             if (max_button_height > 0) self.height += max_button_height + context.vertical_padding;
+
+            debug.assert(self.hotspots.items.len == 0);
+            try self.hotspots.ensureTotalCapacity(context.gpa.allocator(), max_button_height);
         }
     }
 
-    pub fn deinit(self: *const Surface) void {
+    pub fn deinit(self: *Surface) void {
+        self.hotspots.deinit(context.gpa.allocator());
         self.layer_surface.destroy();
         self.wl_surface.destroy();
+    }
+
+    pub fn hotspotFromPoint(self: *Surface, x: u31, y: u31) ?*HotSpot {
+        for (self.hotspots.items) |*hs| {
+            if (hs.containsPoint(x, y)) {
+                return hs;
+            }
+        }
+        return null;
     }
 
     fn layerSurfaceListener(layer_surface: *zwlr.LayerSurfaceV1, event: zwlr.LayerSurfaceV1.Event, self: *Surface) void {
@@ -460,6 +641,11 @@ const Surface = struct {
             Y += try errmessage.draw(image, &context.error_text_colour, X, Y);
         }
 
+        // The hotspot list is populated on first render. We could technically
+        // do it in calculateSize(), but we already have all the sizes here
+        // already, so doing it here is more convenient for now.
+        const populate_hotspots = self.hotspots.items.len == 0;
+
         // Buttons
         {
             const combined_button_length = blk: {
@@ -471,6 +657,16 @@ const Surface = struct {
             };
             var X: u31 = @divFloor(self.width + context.horizontal_padding, 2) -| @divFloor(combined_button_length, 2);
             if (wayland_context.cancel) |cancel| {
+                if (populate_hotspots) {
+                    self.hotspots.appendAssumeCapacity(.{
+                        .effect = .cancel,
+                        .x = X,
+                        .y = Y,
+                        .width = cancel.width + 2 * context.button_inner_padding,
+                        .height = cancel.height + 2 * context.button_inner_padding,
+                    });
+                }
+
                 borderedRectangle(
                     image,
                     X,
@@ -486,6 +682,16 @@ const Surface = struct {
                 X += cancel.width + 2 * context.button_inner_padding + context.horizontal_padding;
             }
             if (wayland_context.notok) |notok| {
+                if (populate_hotspots) {
+                    self.hotspots.appendAssumeCapacity(.{
+                        .effect = .notok,
+                        .x = X,
+                        .y = Y,
+                        .width = notok.width + 2 * context.button_inner_padding,
+                        .height = notok.height + 2 * context.button_inner_padding,
+                    });
+                }
+
                 borderedRectangle(
                     image,
                     X,
@@ -501,6 +707,16 @@ const Surface = struct {
                 X += notok.width + 2 * context.button_inner_padding + context.horizontal_padding;
             }
             if (wayland_context.ok) |ok| {
+                if (populate_hotspots) {
+                    self.hotspots.appendAssumeCapacity(.{
+                        .effect = .ok,
+                        .x = X,
+                        .y = Y,
+                        .width = ok.width + 2 * context.button_inner_padding,
+                        .height = ok.height + 2 * context.button_inner_padding,
+                    });
+                }
+
                 borderedRectangle(
                     image,
                     X,
@@ -775,7 +991,7 @@ pub const WaylandContext = struct {
 
         // Cleanup all things we may set up in response to Wayland events.
         defer {
-            if (self.surface) |s| s.deinit();
+            if (self.surface) |*s| s.deinit();
             self.buffer_pool.reset();
             if (self.layer_shell) |ls| ls.destroy();
             if (self.compositor) |cmp| cmp.destroy();
