@@ -301,9 +301,10 @@ const Seat = struct {
                     .pressed => self.press_hotspot = wayland_context.surface.?.hotspotFromPoint(self.pointer_x, self.pointer_y),
                     .released => {
                         if (self.press_hotspot == null) return;
-                        const release_hotspot = wayland_context.surface.?.hotspotFromPoint(self.pointer_x, self.pointer_y) orelse return;
-                        if (self.press_hotspot.? == release_hotspot) {
-                            release_hotspot.act();
+                        if (wayland_context.surface.?.hotspotFromPoint(self.pointer_x, self.pointer_y)) |hs| {
+                            if (hs == self.press_hotspot.?) {
+                                hs.act();
+                            }
                         }
                         self.press_hotspot = null;
                     },
