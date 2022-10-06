@@ -9,47 +9,57 @@ const log = std.log.scoped(.wayprompt);
 const wayland = @import("wayland.zig");
 const context = &@import("wayprompt.zig").context;
 
-var mode: wayland.WaylandContext.Mode = .getpin;
+var getpin: bool = false;
 
 pub fn main() !u8 {
     parseCmdFlags() catch |err| {
         switch (err) {
             error.DumpedUsage => return 0,
-            error.UnknownFlag, error.MissingArgument, error.BadArgument => return 1,
+            error.UnknownFlag, error.MissingArgument => return 1,
             else => return err,
         }
     };
 
-    if (mode == .message or mode == .confirm) {
+    if (!getpin) {
         if (context.prompt != null) {
-            log.err("you can not set a prompt for message and confirm modes.'", .{});
+            log.err("you may not set a prompt when not querying for a password.", .{});
             return 1;
         }
+
         if (context.title == null and context.description == null and context.errmessage == null) {
-            log.err("at least one of title, description or error need to be set for message and confirm modes.", .{});
+            log.err("at least one of title, description or error need to be set when not querying for a password.", .{});
             return 1;
         }
     }
 
-    const pin = wayland.run(mode) catch |err| {
-        if (err == error.UserAbort) return 2; // TODO document exit codes?
-        log.err("failed to run: {}", .{err});
-        return 1;
-    };
+    const stdout = io.getStdOut();
+    var out_buffer = io.bufferedWriter(stdout.writer());
+    const writer = out_buffer.writer();
 
-    if (pin) |p| {
-        debug.assert(mode == .getpin);
-        const alloc = context.gpa.allocator();
-        defer alloc.free(p);
+    if (wayland.run(if (getpin) .getpin else .message)) |pin_maybe_null| {
+        try writer.writeAll("user-action: ok\n");
+        if (pin_maybe_null) |pin| {
+            defer context.gpa.allocator().free(pin);
 
-        // TODO maybe optional JSON output? Can be better parsed and the no-pin
-        //      state would be less ambigous.
+            debug.assert(getpin);
 
-        const stdout = io.getStdOut();
-        var out_buffer = io.bufferedWriter(stdout.writer());
-        try out_buffer.writer().print("{s}\n", .{p});
-        try out_buffer.flush();
+            if (getpin) try writer.print("pin: {s}\n", .{pin});
+        } else if (getpin) {
+            if (getpin) try writer.writeAll("no pin\n");
+        }
+    } else |err| {
+        switch (err) {
+            error.UserAbort => try writer.writeAll("user-action: cancel\n"),
+            error.UserNotOk => try writer.writeAll("user-action: not-ok\n"),
+            else => {
+                log.err("unexpected error: {}", .{err});
+                return 1;
+            },
+        }
+        if (getpin) try writer.writeAll("no pin\n");
     }
+
+    try out_buffer.flush();
 
     return 0;
 }
@@ -124,28 +134,21 @@ fn parseCmdFlags() !void {
                 log.err("flag '--button-cancel' needs an argument.", .{});
                 return error.MissingArgument;
             });
-        } else if (mem.eql(u8, flag, "--mode")) {
-            const m = it.next() orelse {
-                log.err("flag '--mode' needs an argument.", .{});
-                return error.MissingArgument;
-            };
-            mode = meta.stringToEnum(wayland.WaylandContext.Mode, m) orelse {
-                log.err("unknown mode '{s}', valid modes are 'getpin', 'message' and 'confirm' .", .{m});
-                return error.BadArgument;
-            };
+        } else if (mem.eql(u8, flag, "--get-pin")) {
+            getpin = true;
         } else if (mem.eql(u8, flag, "--help") or mem.eql(u8, flag, "-h")) {
             const stdout = io.getStdOut();
             var out_buffer = io.bufferedWriter(stdout.writer());
             try out_buffer.writer().print(
                 \\Usage: {s} [options..]
                 \\--title             Set the window title
-                \\--prompt            Set the prompt.
+                \\--prompt            Set the prompt. Can only be used with '--get-pin'.
                 \\--error             Set the error message.
+                \\--button-ok         Display the ok button with the provided Text.
+                \\--button-no-ok      Display the not-ok button with the provided Text.
+                \\--button-cancel     Display the cancel button with the provided Text.
                 \\--wayland-display   Set the WAYLAND_DISPLAY to be used.
-                \\--mode              Set the mode. May be 'getpin', 'message' or 'confirm'.
-                \\--button-ok         Text of the ok button.
-                \\--button-no-ok      Text of the not ok button.
-                \\--button-cancel     Text of the cancel button.
+                \\--get-pin           Query for a password.
                 \\--help, -h          Dump help text and exit.
                 \\
             , .{os.argv[0]});
