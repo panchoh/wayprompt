@@ -12,6 +12,11 @@ const wayland = @import("wayland.zig");
 
 const context = &@import("wayprompt.zig").context;
 
+var default_ok: ?[]const u8 = null;
+var default_cancel: ?[]const u8 = null;
+var default_yes: ?[]const u8 = null;
+var default_no: ?[]const u8 = null;
+
 pub fn main() !u8 {
     const stdout = io.getStdOut();
     const stdin = io.getStdIn();
@@ -34,6 +39,14 @@ pub fn main() !u8 {
 
     try out_buffer.writer().writeAll("OK wayprompt is pleased to meet you\n");
     try out_buffer.flush();
+
+    defer {
+        const alloc = context.gpa.allocator();
+        if (default_ok) |str| alloc.free(str);
+        if (default_cancel) |str| alloc.free(str);
+        if (default_yes) |str| alloc.free(str);
+        if (default_no) |str| alloc.free(str);
+    }
 
     while (context.loop) {
         _ = try os.poll(&fds, -1);
@@ -93,6 +106,19 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
         // TODO it's possible that the gpg-apgent requests us to ask for the
         //      pin twice (f.e. when the user creates a new one, I imagine).
         //      This needs support in the UI.
+
+        // If we don't have buttons defined, use the default ones. Note: This
+        // transfers ownership of the string. This means they will be freed when
+        // context is deinit'd.
+        if (context.ok == null and default_ok != null) {
+            context.ok = default_ok.?;
+            default_ok = null;
+        }
+        if (context.cancel == null and default_cancel != null) {
+            context.cancel = default_cancel.?;
+            default_cancel = null;
+        }
+
         if (wayland.run(.getpin)) |pin| {
             if (pin) |p| {
                 defer alloc.free(p);
@@ -128,6 +154,19 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
     } else if (ascii.eqlIgnoreCase(command, "confirm")) {
         // TODO this can optionally have the "--one-button" option, in which
         //      case it effectively functions like MESSAGE.
+
+        // If we don't have buttons defined, use the default ones. Note: This
+        // transfers ownership of the string. This means they will be freed when
+        // context is deinit'd.
+        if (context.ok == null and default_yes != null) {
+            context.ok = default_yes.?;
+            default_yes = null;
+        }
+        if (context.cancel == null and default_no != null) {
+            context.cancel = default_no.?;
+            default_no = null;
+        }
+
         if (wayland.run(.confirm)) |ret| {
             debug.assert(ret == null);
             try writer.writeAll("OK\n");
@@ -179,10 +218,21 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "option")) {
         if (it.next()) |option| {
-            const option_wayland = "putenv=WAYLAND_DISPLAY=";
-            if (mem.startsWith(u8, option, option_wayland)) {
+            if (getOption("putenv=WAYLAND_DISPLAY=", option, line)) |o| {
                 if (context.wayland_display) |w| alloc.free(w);
-                context.wayland_display = try alloc.dupeZ(u8, line["option ".len + option_wayland.len ..]);
+                context.wayland_display = try alloc.dupeZ(u8, o);
+            } else if (getOption("default-ok=", option, line)) |o| {
+                if (default_ok) |w| alloc.free(w);
+                default_ok = try pinentryDupe(o, true);
+            } else if (getOption("default-cancel=", option, line)) |o| {
+                if (default_cancel) |w| alloc.free(w);
+                default_cancel = try pinentryDupe(o, true);
+            } else if (getOption("default-yes=", option, line)) |o| {
+                if (default_yes) |w| alloc.free(w);
+                default_yes = try pinentryDupe(o, true);
+            } else if (getOption("default-no=", option, line)) |o| {
+                if (default_no) |w| alloc.free(w);
+                default_no = try pinentryDupe(o, true);
             }
         }
         // Most options are internationalisation for features we don't offer.
@@ -249,17 +299,25 @@ fn setString(writer: anytype, comptime name: []const u8, value: []const u8) !voi
         @field(context.*, name) = null;
         alloc.free(f);
     }
-    @field(context.*, name) = try pinentryDupe(value);
+    @field(context.*, name) = try pinentryDupe(value, false);
     try writer.writeAll("OK\n");
 }
 
+fn getOption(comptime opt: []const u8, arg: []const u8, line: []const u8) ?[]const u8 {
+    if (mem.startsWith(u8, arg, opt)) {
+        return line["option ".len + opt.len ..];
+    }
+    return null;
+}
+
 /// Some characters are escaped in assuan messages.
-fn pinentryDupe(str: []const u8) ![]const u8 {
+fn pinentryDupe(str: []const u8, button: bool) ![]const u8 {
     const alloc = context.gpa.allocator();
 
     var len: usize = str.len;
     for (str) |ch| {
         if (ch == '%') len -= 2;
+        if (ch == '_' and button) len -= 1;
     }
 
     const dupe = try alloc.alloc(u8, len);
@@ -272,11 +330,14 @@ fn pinentryDupe(str: []const u8) ![]const u8 {
             if (str.len < i + 3) return error.BadInput;
             dupe[j] = try fmt.parseInt(u8, str[i + 1 .. i + 3], 16);
             i += 3;
+            j += 1;
+        } else if (str[i] == '_' and button) {
+            i += 1;
         } else {
             dupe[j] = str[i];
             i += 1;
+            j += 1;
         }
-        j += 1;
     }
 
     return dupe;
