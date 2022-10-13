@@ -106,98 +106,13 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
         // TODO it's possible that the gpg-apgent requests us to ask for the
         //      pin twice (f.e. when the user creates a new one, I imagine).
         //      This needs support in the UI.
-
-        // If we don't have buttons defined, use the default ones. Note: This
-        // transfers ownership of the string. This means they will be freed when
-        // context is deinit'd.
-        if (context.ok == null and default_ok != null) {
-            context.ok = default_ok.?;
-            default_ok = null;
-        }
-        if (context.cancel == null and default_cancel != null) {
-            context.cancel = default_cancel.?;
-            default_cancel = null;
-        }
-
-        if (wayland.run(.getpin)) |pin| {
-            if (pin) |p| {
-                defer alloc.free(p);
-                try writer.print("D {s}\nEND\nOK\n", .{p});
-            } else {
-                // Sending no pin is also a valid response.
-                try writer.writeAll("OK\n");
-            }
-        } else |err| {
-            // The client will ignore all messages starting with #, however they
-            // should still be logged by the gpg-agent, given that the right
-            // debug options are enabled. This means we can use this to insert
-            // arbitrary messages into the logs and therefore have proper error
-            // logging.
-            //
-            // Technically there is a difference between pressing enter on an
-            // empty prompt and the user aborting. However, gpg-agent apparently
-            // treats both equally. We do it properly of course, because we're
-            // pedantic. Anyway, that's why error.UserAbort exists and why we
-            // don't print it because it's not /really/ an error.
-            if (err != error.UserAbort) {
-                try writer.print("# Error: {s}\n", .{@errorName(err)});
-            }
-            try writer.writeAll("ERR 83886179 Operation cancelled\n");
-        }
-
-        // The errormessage must automatically reset after every GETPIN or
-        // CONFIRM action.
-        if (context.errmessage) |e| {
-            alloc.free(e);
-            context.errmessage = null;
-        }
+        try getPin(writer);
     } else if (ascii.eqlIgnoreCase(command, "confirm")) {
         // TODO this can optionally have the "--one-button" option, in which
         //      case it effectively functions like MESSAGE.
-
-        // If we don't have buttons defined, use the default ones. Note: This
-        // transfers ownership of the string. This means they will be freed when
-        // context is deinit'd.
-        if (context.ok == null and default_yes != null) {
-            context.ok = default_yes.?;
-            default_yes = null;
-        }
-        if (context.cancel == null and default_no != null) {
-            context.cancel = default_no.?;
-            default_no = null;
-        }
-
-        if (wayland.run(.confirm)) |ret| {
-            debug.assert(ret == null);
-            try writer.writeAll("OK\n");
-        } else |err| {
-            switch (err) {
-                error.UserAbort => try writer.writeAll("ERR 83886179 cancelled\n"),
-                error.UserNotOk => try writer.writeAll("ERR 83886194 not confirmed\n"),
-                else => {
-                    try writer.print("# Error: {s}\n", .{@errorName(err)});
-                    try writer.writeAll("ERR 83886179 cancelled\n");
-                },
-            }
-        }
-
-        // The errormessage must automatically reset after every GETPIN or
-        // CONFIRM action.
-        if (context.errmessage) |e| {
-            alloc.free(e);
-            context.errmessage = null;
-        }
+        try confirm(writer);
     } else if (ascii.eqlIgnoreCase(command, "message")) {
-        if (context.title == null and context.description == null and context.errmessage == null) {
-            try writer.writeAll("OK\n");
-            return;
-        } else if (wayland.run(.message)) |ret| {
-            debug.assert(ret == null);
-            try writer.writeAll("OK\n");
-        } else |err| {
-            try writer.print("# Error: {s}\n", .{@errorName(err)});
-            try writer.writeAll("ERR 83886179 cancelled\n");
-        }
+        try message(writer);
     } else if (ascii.eqlIgnoreCase(command, "getinfo")) {
         if (it.next()) |info| {
             if (ascii.eqlIgnoreCase(info, "flavor")) {
@@ -290,6 +205,106 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
         );
     } else {
         try writer.writeAll("ERR 536871187 Unknown IPC command\n");
+    }
+}
+
+fn getPin(writer: anytype) !void {
+    // If we don't have buttons defined, use the default ones. Note: This
+    // transfers ownership of the string. This means they will be freed when
+    // context is deinit'd.
+    if (context.ok == null and default_ok != null) {
+        context.ok = default_ok.?;
+        default_ok = null;
+    }
+    if (context.cancel == null and default_cancel != null) {
+        context.cancel = default_cancel.?;
+        default_cancel = null;
+    }
+
+    if (wayland.run(true)) |pin| {
+        if (pin) |p| {
+            const alloc = context.gpa.allocator();
+            defer alloc.free(p);
+            try writer.print("D {s}\nEND\nOK\n", .{p});
+        } else {
+            // Sending no pin is also a valid response.
+            try writer.writeAll("OK\n");
+        }
+    } else |err| {
+        // The client will ignore all messages starting with #, however they
+        // should still be logged by the gpg-agent, given that the right
+        // debug options are enabled. This means we can use this to insert
+        // arbitrary messages into the logs and therefore have proper error
+        // logging.
+        //
+        // Technically there is a difference between pressing enter on an
+        // empty prompt and the user aborting. However, gpg-agent apparently
+        // treats both equally. We do it properly of course, because we're
+        // pedantic. Anyway, that's why error.UserAbort exists and why we
+        // don't print it because it's not /really/ an error.
+        if (err != error.UserAbort) {
+            try writer.print("# Error: {s}\n", .{@errorName(err)});
+        }
+        try writer.writeAll("ERR 83886179 Operation cancelled\n");
+    }
+
+    // The errormessage must automatically reset after every GETPIN or
+    // CONFIRM action.
+    if (context.errmessage) |e| {
+        const alloc = context.gpa.allocator();
+        alloc.free(e);
+        context.errmessage = null;
+    }
+}
+
+fn message(writer: anytype) !void {
+    if (context.title == null and context.description == null and context.errmessage == null) {
+        try writer.writeAll("OK\n");
+        return;
+    }
+
+    if (wayland.run(false)) |ret| {
+        debug.assert(ret == null);
+        try writer.writeAll("OK\n");
+    } else |err| {
+        try writer.print("# Error: {s}\n", .{@errorName(err)});
+        try writer.writeAll("ERR 83886179 cancelled\n");
+    }
+}
+
+fn confirm(writer: anytype) !void {
+    // If we don't have buttons defined, use the default ones. Note: This
+    // transfers ownership of the string. This means they will be freed when
+    // context is deinit'd.
+    if (context.ok == null and default_yes != null) {
+        context.ok = default_yes.?;
+        default_yes = null;
+    }
+    if (context.cancel == null and default_no != null) {
+        context.cancel = default_no.?;
+        default_no = null;
+    }
+
+    if (wayland.run(false)) |ret| {
+        debug.assert(ret == null);
+        try writer.writeAll("OK\n");
+    } else |err| {
+        switch (err) {
+            error.UserAbort => try writer.writeAll("ERR 83886179 cancelled\n"),
+            error.UserNotOk => try writer.writeAll("ERR 83886194 not confirmed\n"),
+            else => {
+                try writer.print("# Error: {s}\n", .{@errorName(err)});
+                try writer.writeAll("ERR 83886179 cancelled\n");
+            },
+        }
+    }
+
+    // The errormessage must automatically reset after every GETPIN or
+    // CONFIRM action.
+    if (context.errmessage) |e| {
+        const alloc = context.gpa.allocator();
+        alloc.free(e);
+        context.errmessage = null;
     }
 }
 

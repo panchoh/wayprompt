@@ -36,16 +36,14 @@ pub fn main() !u8 {
     var out_buffer = io.bufferedWriter(stdout.writer());
     const writer = out_buffer.writer();
 
-    if (wayland.run(if (getpin) .getpin else .message)) |pin_maybe_null| {
+    if (wayland.run(getpin)) |pin_maybe_null| {
         try writer.writeAll("user-action: ok\n");
         if (pin_maybe_null) |pin| {
-            defer context.gpa.allocator().free(pin);
-
             debug.assert(getpin);
-
-            if (getpin) try writer.print("pin: {s}\n", .{pin});
+            defer context.gpa.allocator().free(pin);
+            try writer.print("pin: {s}\n", .{pin});
         } else if (getpin) {
-            if (getpin) try writer.writeAll("no pin\n");
+            try writer.writeAll("no pin\n");
         }
     } else |err| {
         switch (err) {

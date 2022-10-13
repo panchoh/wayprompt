@@ -497,7 +497,7 @@ const Seat = struct {
                     else => {},
                 }
 
-                if (wayland_context.mode != .getpin) return;
+                if (!wayland_context.getpin) return;
 
                 var buffer: [16]u8 = undefined;
                 const used = self.xkb_state.?.keyGetUtf8(keycode, &buffer);
@@ -547,7 +547,7 @@ const Surface = struct {
         self.height = context.vertical_padding;
         self.width = context.horizontal_padding;
 
-        if (wayland_context.mode == .getpin) {
+        if (wayland_context.getpin) {
             if (wayland_context.prompt) |prompt| {
                 self.width = math.max(prompt.width + 2 * context.horizontal_padding, self.width);
                 self.height += prompt.height + context.vertical_padding;
@@ -654,7 +654,7 @@ const Surface = struct {
             Y += try description.draw(image, &context.text_colour, X, Y);
         }
 
-        if (wayland_context.mode == .getpin) {
+        if (wayland_context.getpin) {
             if (wayland_context.prompt) |prompt| {
                 const X = @divFloor(self.width, 2) -| @divFloor(prompt.width, 2);
                 Y += try prompt.draw(image, &context.text_colour, X, Y);
@@ -932,9 +932,6 @@ const Buffer = struct {
 };
 
 pub const WaylandContext = struct {
-    pub const Mode = enum { getpin, message, confirm };
-    mode: Mode = undefined,
-
     title: ?TextView = null,
     description: ?TextView = null,
     prompt: ?TextView = null,
@@ -942,6 +939,8 @@ pub const WaylandContext = struct {
     ok: ?TextView = null,
     notok: ?TextView = null,
     cancel: ?TextView = null,
+
+    getpin: bool = false,
 
     layer_shell: ?*zwlr.LayerShellV1 = null,
     compositor: ?*wl.Compositor = null,
@@ -964,8 +963,8 @@ pub const WaylandContext = struct {
         self.exit_reason = reason;
     }
 
-    pub fn run(self: *WaylandContext, mode: Mode) !?[]const u8 {
-        self.mode = mode;
+    pub fn run(self: *WaylandContext, getpin: bool) !?[]const u8 {
+        self.getpin = getpin;
 
         _ = fcft.init(.never, false, .none);
         defer fcft.fini();
@@ -1046,7 +1045,7 @@ pub const WaylandContext = struct {
             return reason;
         }
 
-        if (mode == .getpin) {
+        if (self.getpin) {
             return self.pin.toOwnedSlice();
         } else {
             debug.assert(self.pin.len == 0);
@@ -1111,7 +1110,7 @@ pub const WaylandContext = struct {
 var wayland_context: WaylandContext = undefined;
 
 /// Returned pin is owned by context.gpa.
-pub fn run(mode: WaylandContext.Mode) !?[]const u8 {
+pub fn run(getpin: bool) !?[]const u8 {
     wayland_context = .{};
-    return (try wayland_context.run(mode));
+    return (try wayland_context.run(getpin));
 }
