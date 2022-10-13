@@ -16,9 +16,49 @@ const wl = wayland.client.wl;
 const zwlr = wayland.client.zwlr;
 
 const util = @import("util.zig");
-const InputBuffer = @import("InputBuffer.zig");
 
 const context = &@import("wayprompt.zig").context;
+
+const Utf8String = struct {
+    buffer: std.ArrayListUnmanaged(u8) = .{},
+    len: usize = 0,
+
+    pub fn appendSlice(self: *Utf8String, str: []const u8) !void {
+        const len = try unicode.utf8CountCodepoints(str);
+        const alloc = context.gpa.allocator();
+        try self.buffer.appendSlice(alloc, str);
+        self.len += len;
+    }
+
+    pub fn deleteBackwards(self: *Utf8String) void {
+        if (self.buffer.items.len == 0) return;
+        const alloc = context.gpa.allocator();
+        var i: usize = self.buffer.items.len - 1;
+        while (i >= 0) : (i -= 1) {
+            _ = unicode.utf8ByteSequenceLength(self.buffer.items[i]) catch continue;
+            self.buffer.shrinkAndFree(alloc, i);
+            self.len -= 1;
+            return;
+        }
+        unreachable;
+    }
+
+    pub fn toOwnedSlice(self: *Utf8String) ?[]const u8 {
+        const alloc = context.gpa.allocator();
+        defer self.* = .{};
+        if (self.buffer.items.len > 0) {
+            return self.buffer.toOwnedSlice(alloc);
+        } else {
+            return null;
+        }
+    }
+
+    pub fn deinit(self: *Utf8String) void {
+        const alloc = context.gpa.allocator();
+        self.buffer.deinit(alloc);
+        self.* = .{};
+    }
+};
 
 const HotSpot = struct {
     const Effect = enum { cancel, ok, notok };
@@ -445,11 +485,8 @@ const Seat = struct {
                         return;
                     },
                     xkb.Keysym.BackSpace => {
-                        if (wayland_context.pin) |*pin| {
-                            debug.assert(wayland_context.mode == .getpin);
-                            pin.*.delete(.left, 1);
-                            wayland_context.surface.?.render() catch wayland_context.abort(error.OutOfMemory);
-                        }
+                        wayland_context.pin.deleteBackwards();
+                        wayland_context.surface.?.render() catch wayland_context.abort(error.OutOfMemory);
                         return;
                     },
                     xkb.Keysym.Delete => return,
@@ -462,21 +499,9 @@ const Seat = struct {
 
                 if (wayland_context.mode != .getpin) return;
 
-                {
-                    @setRuntimeSafety(true);
-                    if (wayland_context.pin == null) {
-                        wayland_context.pin = InputBuffer.new(context.gpa.allocator()) catch {
-                            wayland_context.abort(error.OutOfMemory);
-                            return;
-                        };
-                    }
-                    var buffer: [16]u8 = undefined;
-                    const used = self.xkb_state.?.keyGetUtf8(keycode, &buffer);
-                    wayland_context.pin.?.insertUTF8Slice(buffer[0..used]) catch {
-                        wayland_context.abort(error.OutOfMemory);
-                        return;
-                    };
-                }
+                var buffer: [16]u8 = undefined;
+                const used = self.xkb_state.?.keyGetUtf8(keycode, &buffer);
+                wayland_context.pin.appendSlice(buffer[0..used]) catch {};
 
                 // We only get keyboard input when a surface exists.
                 wayland_context.surface.?.render() catch wayland_context.abort(error.OutOfMemory);
@@ -634,7 +659,7 @@ const Surface = struct {
                 const X = @divFloor(self.width, 2) -| @divFloor(prompt.width, 2);
                 Y += try prompt.draw(image, &context.text_colour, X, Y);
             }
-            Y += self.drawPinarea(image, if (wayland_context.pin) |pin| pin.buffer.items.len else 0, Y);
+            Y += self.drawPinarea(image, wayland_context.pin.len, Y);
         }
 
         if (wayland_context.errmessage) |errmessage| {
@@ -930,13 +955,11 @@ pub const WaylandContext = struct {
     loop: bool = true,
     exit_reason: ?anyerror = null,
 
-    pin: ?InputBuffer = null,
+    pin: Utf8String = .{},
 
     pub fn abort(self: *WaylandContext, reason: anyerror) void {
-        if (self.pin) |*pin| {
-            pin.deinit();
-            self.pin = null;
-        }
+        self.pin.deinit();
+        self.pin = .{};
         self.loop = false;
         self.exit_reason = reason;
     }
@@ -1007,7 +1030,8 @@ pub const WaylandContext = struct {
             }
         }
         errdefer {
-            if (self.pin) |*pin| pin.deinit();
+            self.pin.deinit();
+            self.pin = .{};
         }
 
         // Per pinentry protocol documentation, the client may not send us anything
@@ -1018,18 +1042,14 @@ pub const WaylandContext = struct {
         }
 
         if (self.exit_reason) |reason| {
-            debug.assert(self.pin == null);
+            debug.assert(self.pin.len == 0);
             return reason;
         }
 
-        if (mode == .getpin and self.pin != null) {
-            if (self.pin.?.buffer.items.len == 0) {
-                self.pin.?.deinit();
-                return null;
-            }
-            return try self.pin.?.toOwnedUtf8Slice();
+        if (mode == .getpin) {
+            return self.pin.toOwnedSlice();
         } else {
-            debug.assert(self.pin == null);
+            debug.assert(self.pin.len == 0);
             return null;
         }
     }
