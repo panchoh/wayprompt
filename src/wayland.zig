@@ -15,50 +15,9 @@ const wayland = @import("wayland");
 const wl = wayland.client.wl;
 const zwlr = wayland.client.zwlr;
 
-const util = @import("util.zig");
-
 const context = &@import("wayprompt.zig").context;
 
-const Utf8String = struct {
-    buffer: std.ArrayListUnmanaged(u8) = .{},
-    len: usize = 0,
-
-    pub fn appendSlice(self: *Utf8String, str: []const u8) !void {
-        const len = try unicode.utf8CountCodepoints(str);
-        const alloc = context.gpa.allocator();
-        try self.buffer.appendSlice(alloc, str);
-        self.len += len;
-    }
-
-    pub fn deleteBackwards(self: *Utf8String) void {
-        if (self.buffer.items.len == 0) return;
-        const alloc = context.gpa.allocator();
-        var i: usize = self.buffer.items.len - 1;
-        while (i >= 0) : (i -= 1) {
-            _ = unicode.utf8ByteSequenceLength(self.buffer.items[i]) catch continue;
-            self.buffer.shrinkAndFree(alloc, i);
-            self.len -= 1;
-            return;
-        }
-        unreachable;
-    }
-
-    pub fn toOwnedSlice(self: *Utf8String) ?[]const u8 {
-        const alloc = context.gpa.allocator();
-        defer self.* = .{};
-        if (self.buffer.items.len > 0) {
-            return self.buffer.toOwnedSlice(alloc);
-        } else {
-            return null;
-        }
-    }
-
-    pub fn deinit(self: *Utf8String) void {
-        const alloc = context.gpa.allocator();
-        self.buffer.deinit(alloc);
-        self.* = .{};
-    }
-};
+const Utf8String = @import("Utf8String.zig");
 
 const HotSpot = struct {
     const Effect = enum { cancel, ok, notok };
@@ -931,7 +890,7 @@ const Buffer = struct {
     }
 };
 
-pub const WaylandContext = struct {
+const WaylandContext = struct {
     title: ?TextView = null,
     description: ?TextView = null,
     prompt: ?TextView = null,
@@ -957,14 +916,18 @@ pub const WaylandContext = struct {
     pin: Utf8String = .{},
 
     pub fn abort(self: *WaylandContext, reason: anyerror) void {
-        self.pin.deinit();
-        self.pin = .{};
         self.loop = false;
         self.exit_reason = reason;
     }
 
     pub fn run(self: *WaylandContext, getpin: bool) !?[]const u8 {
         self.getpin = getpin;
+
+        const wayland_display = blk: {
+            if (context.wayland_display) |wd| break :blk wd;
+            if (os.getenv("WAYLAND_DISPLAY")) |wd| break :blk wd;
+            return error.NoWaylandDisplay;
+        };
 
         _ = fcft.init(.never, false, .none);
         defer fcft.fini();
@@ -991,12 +954,6 @@ pub const WaylandContext = struct {
         defer if (self.notok) |notok| notok.deinit();
         if (context.cancel) |cancel| self.cancel = try TextView.new(mem.trim(u8, cancel, &ascii.spaces), font_regular);
         defer if (self.cancel) |cancel| cancel.deinit();
-
-        const wayland_display = blk: {
-            if (context.wayland_display) |wd| break :blk wd;
-            if (os.getenv("WAYLAND_DISPLAY")) |wd| break :blk wd;
-            return error.NoWaylandDisplay;
-        };
 
         const display = try wl.Display.connect(@ptrCast([*:0]const u8, wayland_display.ptr));
         defer display.disconnect();
@@ -1028,10 +985,7 @@ pub const WaylandContext = struct {
                 alloc.destroy(node);
             }
         }
-        errdefer {
-            self.pin.deinit();
-            self.pin = .{};
-        }
+        errdefer self.pin.deinit();
 
         // Per pinentry protocol documentation, the client may not send us anything
         // while it is waiting for a data response. So it's fine to just jump into
@@ -1041,11 +995,8 @@ pub const WaylandContext = struct {
         }
 
         if (self.exit_reason) |reason| {
-            debug.assert(self.pin.len == 0);
             return reason;
-        }
-
-        if (self.getpin) {
+        } else if (self.getpin) {
             return self.pin.toOwnedSlice();
         } else {
             debug.assert(self.pin.len == 0);

@@ -26,6 +26,8 @@ pub fn build(b: *zbs.Builder) !void {
     wayprompt.setBuildMode(mode);
     wayprompt.addOptions("build_options", options);
 
+    wayprompt.addPackagePath("spoon", "deps/zig-spoon/import.zig");
+
     const pixman = std.build.Pkg{
         .name = "pixman",
         .path = .{ .path = "deps/zig-pixman/pixman.zig" },

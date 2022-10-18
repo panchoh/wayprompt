@@ -50,6 +50,7 @@ const Context = struct {
     // We may not have WAYLAND_DISPLAY in our env when we get started, or maybe
     // even a bad one. However the gpg-agent will likely send us its own.
     wayland_display: ?[:0]const u8 = null,
+    tty_name: ?[:0]const u8 = null,
 
     /// Release all allocated objects.
     pub fn reset(self: *Context) void {
@@ -85,6 +86,10 @@ const Context = struct {
         if (self.wayland_display) |t| {
             alloc.free(t);
             self.wayland_display = null;
+        }
+        if (self.tty_name) |t| {
+            alloc.free(t);
+            self.tty_name = null;
         }
     }
 };

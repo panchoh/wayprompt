@@ -9,6 +9,7 @@ const fmt = std.fmt;
 const debug = std.debug;
 
 const wayland = @import("wayland.zig");
+const tty = @import("tty.zig");
 
 const context = &@import("wayprompt.zig").context;
 
@@ -136,6 +137,9 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
             if (getOption("putenv=WAYLAND_DISPLAY=", option, line)) |o| {
                 if (context.wayland_display) |w| alloc.free(w);
                 context.wayland_display = try alloc.dupeZ(u8, o);
+            } else if (getOption("ttyname=", option, line)) |o| {
+                if (context.tty_name) |w| alloc.free(w);
+                context.tty_name = try alloc.dupeZ(u8, o);
             } else if (getOption("default-ok=", option, line)) |o| {
                 if (default_ok) |w| alloc.free(w);
                 default_ok = try pinentryDupe(o, true);
@@ -221,9 +225,10 @@ fn getPin(writer: anytype) !void {
         default_cancel = null;
     }
 
+    const alloc = context.gpa.allocator();
+
     if (wayland.run(true)) |pin| {
         if (pin) |p| {
-            const alloc = context.gpa.allocator();
             defer alloc.free(p);
             try writer.print("D {s}\nEND\nOK\n", .{p});
         } else {
@@ -231,6 +236,7 @@ fn getPin(writer: anytype) !void {
             try writer.writeAll("OK\n");
         }
     } else |err| {
+        // TODO error.UserNotOk should be handled here as well
         // The client will ignore all messages starting with #, however they
         // should still be logged by the gpg-agent, given that the right
         // debug options are enabled. This means we can use this to insert
@@ -242,16 +248,25 @@ fn getPin(writer: anytype) !void {
         // treats both equally. We do it properly of course, because we're
         // pedantic. Anyway, that's why error.UserAbort exists and why we
         // don't print it because it's not /really/ an error.
-        if (err != error.UserAbort) {
-            try writer.print("# Error: {s}\n", .{@errorName(err)});
+        if (err == error.NoWaylandDisplay or err == error.ConnectFailed) {
+            if (tty.run(true)) |_pin| {
+                if (_pin) |p| {
+                    defer alloc.free(p);
+                    try writer.print("D {s}\nEND\nOK\n", .{p});
+                } else {
+                    try writer.writeAll("OK\n");
+                }
+            } else |e| {
+                try errMessage(writer, e);
+            }
+        } else {
+            try errMessage(writer, err);
         }
-        try writer.writeAll("ERR 83886179 Operation cancelled\n");
     }
 
     // The errormessage must automatically reset after every GETPIN or
     // CONFIRM action.
     if (context.errmessage) |e| {
-        const alloc = context.gpa.allocator();
         alloc.free(e);
         context.errmessage = null;
     }
@@ -267,8 +282,16 @@ fn message(writer: anytype) !void {
         debug.assert(ret == null);
         try writer.writeAll("OK\n");
     } else |err| {
-        try writer.print("# Error: {s}\n", .{@errorName(err)});
-        try writer.writeAll("ERR 83886179 cancelled\n");
+        if (err == error.NoWaylandDisplay or err == error.ConnectFailed) {
+            if (tty.run(false)) |r| {
+                debug.assert(r == null);
+                try writer.writeAll("OK\n");
+            } else |e| {
+                try errMessage(writer, e);
+            }
+        } else {
+            try errMessage(writer, err);
+        }
     }
 }
 
@@ -289,13 +312,15 @@ fn confirm(writer: anytype) !void {
         debug.assert(ret == null);
         try writer.writeAll("OK\n");
     } else |err| {
-        switch (err) {
-            error.UserAbort => try writer.writeAll("ERR 83886179 cancelled\n"),
-            error.UserNotOk => try writer.writeAll("ERR 83886194 not confirmed\n"),
-            else => {
-                try writer.print("# Error: {s}\n", .{@errorName(err)});
-                try writer.writeAll("ERR 83886179 cancelled\n");
-            },
+        if (err == error.NoWaylandDisplay or err == error.ConnectFailed) {
+            if (tty.run(false)) |r| {
+                debug.assert(r == null);
+                try writer.writeAll("OK\n");
+            } else |e| {
+                try errMessage(writer, e);
+            }
+        } else {
+            try errMessage(writer, err);
         }
     }
 
@@ -305,6 +330,17 @@ fn confirm(writer: anytype) !void {
         const alloc = context.gpa.allocator();
         alloc.free(e);
         context.errmessage = null;
+    }
+}
+
+fn errMessage(writer: anytype, err: anyerror) !void {
+    switch (err) {
+        error.UserAbort => try writer.writeAll("ERR 83886179 Operation cancelled\n"),
+        error.UserNotOk => try writer.writeAll("ERR 83886194 not confirmed\n"),
+        else => {
+            try writer.print("# Error: {s}\n", .{@errorName(err)});
+            try writer.writeAll("ERR 83886179 Operation cancelled\n");
+        },
     }
 }
 
