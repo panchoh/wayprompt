@@ -17,7 +17,7 @@ const zwlr = wayland.client.zwlr;
 
 const context = &@import("wayprompt.zig").context;
 
-const Utf8String = @import("Utf8String.zig");
+const SecretBuffer = @import("SecretBuffer.zig");
 
 const HotSpot = struct {
     const Effect = enum { cancel, ok, notok };
@@ -913,7 +913,7 @@ const WaylandContext = struct {
     loop: bool = true,
     exit_reason: ?anyerror = null,
 
-    pin: Utf8String = .{},
+    pin: SecretBuffer = undefined,
 
     pub fn abort(self: *WaylandContext, reason: anyerror) void {
         self.loop = false;
@@ -921,6 +921,9 @@ const WaylandContext = struct {
     }
 
     pub fn run(self: *WaylandContext, getpin: bool) !?[]const u8 {
+        self.pin = try SecretBuffer.new();
+        defer self.pin.deinit();
+
         self.getpin = getpin;
 
         const wayland_display = blk: {
@@ -985,7 +988,6 @@ const WaylandContext = struct {
                 alloc.destroy(node);
             }
         }
-        errdefer self.pin.deinit();
 
         // Per pinentry protocol documentation, the client may not send us anything
         // while it is waiting for a data response. So it's fine to just jump into
@@ -997,7 +999,7 @@ const WaylandContext = struct {
         if (self.exit_reason) |reason| {
             return reason;
         } else if (self.getpin) {
-            return self.pin.toOwnedSlice();
+            return self.pin.copySlice();
         } else {
             debug.assert(self.pin.len == 0);
             return null;

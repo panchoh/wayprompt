@@ -8,7 +8,7 @@ const spoon = @import("spoon");
 
 const context = &@import("wayprompt.zig").context;
 
-const Utf8String = @import("Utf8String.zig");
+const SecretBuffer = @import("SecretBuffer.zig");
 
 const LineIterator = struct {
     in: ?[]const u8,
@@ -40,10 +40,11 @@ const TtyContext = struct {
     getpin: bool = false,
     exit_reason: ?anyerror = null,
 
-    pin: Utf8String = .{},
+    pin: SecretBuffer = undefined,
 
     pub fn run(self: *TtyContext, getpin: bool) !?[]const u8 {
-        errdefer self.pin.deinit();
+        self.pin = try SecretBuffer.new();
+        defer self.pin.deinit();
 
         self.getpin = getpin;
 
@@ -113,7 +114,7 @@ const TtyContext = struct {
         if (self.exit_reason) |reason| {
             return reason;
         } else if (self.getpin) {
-            return self.pin.toOwnedSlice();
+            return try self.pin.copySlice();
         } else {
             debug.assert(self.pin.len == 0);
             return null;
