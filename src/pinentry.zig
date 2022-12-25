@@ -57,7 +57,12 @@ pub fn main() !u8 {
         // Behold: We also read '\n', so let's get rid of that here handily by
         // just not including it in the slice.
         try parseInput(out_buffer.writer(), in_buffer[0 .. read - 1]);
-        try out_buffer.flush();
+        out_buffer.flush() catch |err| {
+            // gpg-agent recently has become very eager to close the pipe after
+            // sending "bye", so sending it an "OK" response will fail.
+            if (context.loop == false and err == error.BrokenPipe) break;
+            return err;
+        };
     }
 
     return 0;
