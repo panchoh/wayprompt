@@ -2,12 +2,13 @@ const std = @import("std");
 const mem = std.mem;
 const os = std.os;
 const heap = std.heap;
-const log = std.log.scoped(.wayprompt);
+const logger = std.log;
 const io = std.io;
 const fmt = std.fmt;
 const math = std.math;
 const fs = std.fs;
 const meta = std.meta;
+const c = std.c;
 
 const pixman = @import("pixman");
 
@@ -16,6 +17,7 @@ const pinentry = @import("pinentry.zig");
 const cli = @import("cli.zig");
 
 const Context = struct {
+    syslog: bool = false,
     loop: bool = true,
     gpa: heap.GeneralPurposeAllocator(.{}) = .{},
 
@@ -100,8 +102,6 @@ pub fn main() !u8 {
     defer _ = context.gpa.deinit();
     defer context.reset();
 
-    parseConfig() catch return 1;
-
     const exec_name = blk: {
         const full_command_name = mem.span(os.argv[0]);
         var i: usize = full_command_name.len - 1;
@@ -114,12 +114,20 @@ pub fn main() !u8 {
     };
 
     if (mem.startsWith(u8, exec_name, "pinentry")) {
-        return try pinentry.main();
+        context.syslog = true;
+        parseConfig() catch return 1;
+        return pinentry.main() catch |err| {
+            logger.err("unexpected error: '{}'", .{err});
+            return 1;
+        };
     } else if (mem.startsWith(u8, exec_name, "hiprompt")) {
         @panic("TODO");
     } else if (mem.eql(u8, exec_name, "wayprompt-cli")) {
+        context.syslog = false;
+        parseConfig() catch return 1;
         return try cli.main();
     } else {
+        context.syslog = false;
         const stdout = io.getStdOut();
         var out_buffer = io.bufferedWriter(stdout.writer());
         const writer = out_buffer.writer();
@@ -169,7 +177,7 @@ fn parseConfig() !void {
     var line: usize = 0;
     while (it.next(&line) catch |err| {
         if (err == error.InvalidLine) {
-            log.err("{s}:{}: Syntax error.", .{ path, line });
+            logger.err("{s}:{}: Syntax error.", .{ path, line });
             return error.BadConfig;
         } else {
             return err;
@@ -179,29 +187,29 @@ fn parseConfig() !void {
             .section => |sect| section = blk: {
                 const sec = meta.stringToEnum(Section, sect);
                 if (sec == null or sec.? == .none) {
-                    log.err("{s}:{}: Unknown section '{s}'.", .{ path, line, sec });
+                    logger.err("{s}:{}: Unknown section '{s}'.", .{ path, line, sec });
                     return error.BadConfig;
                 }
                 break :blk sec.?;
             },
             .assign => |as| switch (section) {
                 .none => {
-                    log.err("{s}:{}: Assignments must be part of a section.", .{ path, line });
+                    logger.err("{s}:{}: Assignments must be part of a section.", .{ path, line });
                     return error.BadConfig;
                 },
                 .general => assignGeneral(as.variable, as.value) catch |err| {
                     switch (err) {
-                        error.BadInt => log.err("{s}:{}: Invalid unsigned integer: '{s}'", .{ path, line, as.value }),
-                        else => log.err("{s}:{}: Error: '{s}' = '{s}': {}", .{ path, line, as.variable, as.value, err }),
+                        error.BadInt => logger.err("{s}:{}: Invalid unsigned integer: '{s}'", .{ path, line, as.value }),
+                        else => logger.err("{s}:{}: Error: '{s}' = '{s}': {}", .{ path, line, as.variable, as.value, err }),
                     }
                     return error.BadConfig;
                 },
 
                 .colours => assignColour(as.variable, as.value) catch |err| {
                     switch (err) {
-                        error.BadColour => log.err("{s}:{}: Bad colour: '{s}'", .{ path, line, as.value }),
-                        error.UnknownColour => log.err("{s}:{}: Unknown colour: '{s}'", .{ path, line, as.variable }),
-                        else => log.err("{s}:{}: Error while parsing colour: '{s}': {}", .{ path, line, as.variable, err }),
+                        error.BadColour => logger.err("{s}:{}: Bad colour: '{s}'", .{ path, line, as.value }),
+                        error.UnknownColour => logger.err("{s}:{}: Unknown colour: '{s}'", .{ path, line, as.variable }),
+                        else => logger.err("{s}:{}: Error while parsing colour: '{s}': {}", .{ path, line, as.variable, err }),
                     }
                     return error.BadConfig;
                 },
@@ -280,4 +288,31 @@ fn pixmanColourFromRGB(descr: []const u8) !pixman.Color {
         .blue = @as(u16, b << math.log2(0x101)) + b,
         .alpha = @as(u16, a << math.log2(0x101)) + a,
     };
+}
+
+pub fn log(
+    comptime level: std.log.Level,
+    comptime scope: @TypeOf(.EnumLiteral),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    const level_txt = comptime level.asText();
+    const prefix = if (scope == .default) "[wayprompt] " else "[wayprompt, " ++ @tagName(scope) ++ "] ";
+    const format_full = prefix ++ level_txt ++ ": " ++ format ++ "\n";
+
+    if (context.syslog) {
+        nosuspend syslog(format_full, args) catch return;
+    } else {
+        const stderr = std.io.getStdErr().writer();
+        nosuspend stderr.print(format_full, args) catch return;
+    }
+}
+
+fn syslog(
+    comptime format: []const u8,
+    args: anytype,
+) !void {
+    var buf: [1024]u8 = undefined;
+    const str = try fmt.bufPrintZ(&buf, format, args);
+    c.syslog(5, str.ptr); // TODO find documentation on the priority arg.
 }

@@ -7,6 +7,7 @@ const io = std.io;
 const fs = std.fs;
 const fmt = std.fmt;
 const debug = std.debug;
+const log = std.log;
 
 const wayland = @import("wayland.zig");
 const tty = @import("tty.zig");
@@ -228,13 +229,7 @@ fn getPin(writer: anytype) !void {
     const alloc = context.gpa.allocator();
 
     if (wayland.run(true)) |pin| {
-        if (pin) |p| {
-            defer alloc.free(p);
-            try writer.print("D {s}\nEND\nOK\n", .{p});
-        } else {
-            // Sending no pin is also a valid response.
-            try writer.writeAll("OK\n");
-        }
+        try dumpPin(writer, pin);
     } else |err| {
         // TODO error.UserNotOk should be handled here as well
         // The client will ignore all messages starting with #, however they
@@ -249,17 +244,19 @@ fn getPin(writer: anytype) !void {
         // pedantic. Anyway, that's why error.UserAbort exists and why we
         // don't print it because it's not /really/ an error.
         if (err == error.NoWaylandDisplay or err == error.ConnectFailed) {
-            if (tty.run(true)) |_pin| {
-                if (_pin) |p| {
-                    defer alloc.free(p);
-                    try writer.print("D {s}\nEND\nOK\n", .{p});
-                } else {
-                    try writer.writeAll("OK\n");
-                }
+            log.err("error while attempting to display wayland prompt: '{}'. Switching to TTY fallback.", .{err});
+            if (tty.run(true)) |pin| {
+                try dumpPin(writer, pin);
             } else |e| {
+                if (e != error.UserAbort and e != error.UserNotOk) {
+                    log.err("error while attempting to display TTY prompt: '{}'", .{e});
+                }
                 try errMessage(writer, e);
             }
         } else {
+            if (err != error.UserAbort and err != error.UserNotOk) {
+                log.err("error while attempting to display wayland prompt: '{}'", .{err});
+            }
             try errMessage(writer, err);
         }
     }
@@ -269,6 +266,16 @@ fn getPin(writer: anytype) !void {
     if (context.errmessage) |e| {
         alloc.free(e);
         context.errmessage = null;
+    }
+}
+
+fn dumpPin(writer: anytype, pin: ?[]const u8) !void {
+    const alloc = context.gpa.allocator();
+    if (pin) |p| {
+        defer alloc.free(p);
+        try writer.print("D {s}\nEND\nOK\n", .{p});
+    } else {
+        try writer.writeAll("OK\n");
     }
 }
 
@@ -283,13 +290,20 @@ fn message(writer: anytype) !void {
         try writer.writeAll("OK\n");
     } else |err| {
         if (err == error.NoWaylandDisplay or err == error.ConnectFailed) {
+            log.err("error while attempting to display wayland message: '{}'. Switching to TTY fallback.", .{err});
             if (tty.run(false)) |r| {
                 debug.assert(r == null);
                 try writer.writeAll("OK\n");
             } else |e| {
+                if (e != error.UserAbort and e != error.UserNotOk) {
+                    log.err("error while attempting to display TTY message: '{}'", .{e});
+                }
                 try errMessage(writer, e);
             }
         } else {
+            if (err != error.UserAbort and err != error.UserNotOk) {
+                log.err("error while attempting to display wayland message: '{}'", .{err});
+            }
             try errMessage(writer, err);
         }
     }
@@ -313,13 +327,20 @@ fn confirm(writer: anytype) !void {
         try writer.writeAll("OK\n");
     } else |err| {
         if (err == error.NoWaylandDisplay or err == error.ConnectFailed) {
+            log.err("error while attempting to display wayland confirm: '{}'. Switching to TTY fallback.", .{err});
             if (tty.run(false)) |r| {
                 debug.assert(r == null);
                 try writer.writeAll("OK\n");
             } else |e| {
+                if (e != error.UserAbort and e != error.UserNotOk) {
+                    log.err("error while attempting to display TTY confirm: '{}'", .{e});
+                }
                 try errMessage(writer, e);
             }
         } else {
+            if (err != error.UserAbort and err != error.UserNotOk) {
+                log.err("error while attempting to display wayland confirm: '{}'", .{err});
+            }
             try errMessage(writer, err);
         }
     }
@@ -333,6 +354,7 @@ fn confirm(writer: anytype) !void {
     }
 }
 
+// TODO the name of this function is confusing, find a better one
 fn errMessage(writer: anytype, err: anyerror) !void {
     switch (err) {
         error.UserAbort => try writer.writeAll("ERR 83886179 Operation cancelled\n"),
