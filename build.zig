@@ -16,7 +16,7 @@ pub fn build(b: *zbs.Builder) !void {
     scanner.addSystemProtocol("stable/xdg-shell/xdg-shell.xml");
     scanner.generate("wl_compositor", 5);
     scanner.generate("wl_shm", 1);
-    scanner.generate("zwlr_layer_shell_v1", 4);
+    scanner.generate("zwlr_layer_shell_v1", 3);
     scanner.generate("xdg_wm_base", 5); // Needed as a dependency of the layershell.
     scanner.generate("wl_seat", 8);
     scanner.generate("wl_output", 4);
