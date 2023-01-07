@@ -149,6 +149,11 @@ fn parseCmdFlags() !void {
                 \\--get-pin           Query for a password.
                 \\--help, -h          Dump help text and exit.
                 \\
+                \\Run as 'pinentry-wayprompt' to use a pinentry replacement.
+                \\Run as 'hiprompt-wayprompt' to use a himitsu prompter.
+                \\
+                \\See wayprompt.1 for more information.
+                \\
             , .{os.argv[0]});
             try out_buffer.flush();
             return error.DumpedUsage;

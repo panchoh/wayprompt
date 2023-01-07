@@ -122,26 +122,10 @@ pub fn main() !u8 {
         };
     } else if (mem.startsWith(u8, exec_name, "hiprompt")) {
         @panic("TODO");
-    } else if (mem.eql(u8, exec_name, "wayprompt-cli")) {
+    } else {
         context.syslog = false;
         parseConfig() catch return 1;
         return try cli.main();
-    } else {
-        context.syslog = false;
-        const stdout = io.getStdOut();
-        var out_buffer = io.bufferedWriter(stdout.writer());
-        const writer = out_buffer.writer();
-        try writer.writeAll(
-            \\wayprompt - multi-purpose prompter for Wayland
-            \\
-            \\To use as a pinentry replacement, run as 'pinentry-wayprompt'.
-            \\To use as a himitsu prompter, run as 'hiprompt-wayprompt'.
-            \\To use as a generic prompter for scripts, run as 'wayprompt-cli'.
-            \\
-            \\Read wayprompt(1) for further information.
-            \\
-        );
-        try out_buffer.flush();
     }
 
     return 0;
