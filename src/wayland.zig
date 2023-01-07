@@ -290,7 +290,6 @@ const Seat = struct {
     }
 
     fn pointerListener(_: *wl.Pointer, event: wl.Pointer.Event, self: *Seat) void {
-        _ = self;
         switch (event) {
             .enter => |ev| self.updatePointer(ev.surface_x, ev.surface_y, ev.serial),
             .motion => |ev| self.updatePointer(ev.surface_x, ev.surface_y, null),
@@ -835,7 +834,7 @@ const Buffer = struct {
 
         const fd = blk: {
             if (builtin.target.os.tag == .linux) {
-                break :blk try os.memfd_createZ("/wayprompt", os.linux.MFD_CLOEXEC);
+                break :blk try os.memfd_createZ("/wayprompt", os.linux.MFD.CLOEXEC);
             }
             @compileError("patches welcome");
         };

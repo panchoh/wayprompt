@@ -171,7 +171,7 @@ fn parseConfig() !void {
             .section => |sect| section = blk: {
                 const sec = meta.stringToEnum(Section, sect);
                 if (sec == null or sec.? == .none) {
-                    logger.err("{s}:{}: Unknown section '{s}'.", .{ path, line, sec });
+                    logger.err("{s}:{}: Unknown section '{}'.", .{ path, line, sec.? });
                     return error.BadConfig;
                 }
                 break :blk sec.?;
@@ -182,10 +182,7 @@ fn parseConfig() !void {
                     return error.BadConfig;
                 },
                 .general => assignGeneral(as.variable, as.value) catch |err| {
-                    switch (err) {
-                        error.BadInt => logger.err("{s}:{}: Invalid unsigned integer: '{s}'", .{ path, line, as.value }),
-                        else => logger.err("{s}:{}: Error: '{s}' = '{s}': {}", .{ path, line, as.variable, as.value, err }),
-                    }
+                    logger.err("{s}:{}: Invalid unsigned integer: '{s}', {}", .{ path, line, as.value, err });
                     return error.BadConfig;
                 },
 
@@ -204,21 +201,21 @@ fn parseConfig() !void {
 
 fn assignGeneral(variable: []const u8, value: []const u8) !void {
     if (mem.eql(u8, variable, "vertical-padding")) {
-        context.vertical_padding = fmt.parseInt(u31, value, 10) catch return error.BadInt;
+        context.vertical_padding = try fmt.parseInt(u31, value, 10);
     } else if (mem.eql(u8, variable, "horizontal-padding")) {
-        context.horizontal_padding = fmt.parseInt(u31, value, 10) catch return error.BadInt;
+        context.horizontal_padding = try fmt.parseInt(u31, value, 10);
     } else if (mem.eql(u8, variable, "button-inner-padding")) {
-        context.button_inner_padding = fmt.parseInt(u31, value, 10) catch return error.BadInt;
+        context.button_inner_padding = try fmt.parseInt(u31, value, 10);
     } else if (mem.eql(u8, variable, "pin-square-size")) {
-        context.pin_square_size = fmt.parseInt(u31, value, 10) catch return error.BadInt;
+        context.pin_square_size = try fmt.parseInt(u31, value, 10);
     } else if (mem.eql(u8, variable, "pin-square-amount")) {
-        context.pin_square_amount = fmt.parseInt(u31, value, 10) catch return error.BadInt;
+        context.pin_square_amount = try fmt.parseInt(u31, value, 10);
     } else if (mem.eql(u8, variable, "pin-square-border")) {
-        context.pin_square_border = fmt.parseInt(u31, value, 10) catch return error.BadInt;
+        context.pin_square_border = try fmt.parseInt(u31, value, 10);
     } else if (mem.eql(u8, variable, "button-border")) {
-        context.button_border = fmt.parseInt(u31, value, 10) catch return error.BadInt;
+        context.button_border = try fmt.parseInt(u31, value, 10);
     } else if (mem.eql(u8, variable, "border")) {
-        context.border = fmt.parseInt(u31, value, 10) catch return error.BadInt;
+        context.border = try fmt.parseInt(u31, value, 10);
     }
 }
 

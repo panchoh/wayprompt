@@ -56,7 +56,7 @@ const TtyContext = struct {
         }
         defer self.term.deinit();
 
-        os.sigaction(os.SIG.WINCH, &os.Sigaction{
+        try os.sigaction(os.SIG.WINCH, &os.Sigaction{
             .handler = .{ .handler = handleSigWinch },
             .mask = os.empty_sigset,
             .flags = 0,
@@ -74,7 +74,7 @@ const TtyContext = struct {
 
         var fds: [1]os.pollfd = undefined;
         fds[0] = .{
-            .fd = self.term.tty.handle,
+            .fd = self.term.tty.?,
             .events = os.POLL.IN,
             .revents = undefined,
         };

@@ -30,14 +30,14 @@ pub fn build(b: *zbs.Builder) !void {
 
     const pixman = std.build.Pkg{
         .name = "pixman",
-        .path = .{ .path = "deps/zig-pixman/pixman.zig" },
+        .source = .{ .path = "deps/zig-pixman/pixman.zig" },
     };
     wayprompt.addPackage(pixman);
     wayprompt.linkSystemLibrary("pixman-1");
 
     const fcft = std.build.Pkg{
         .name = "fcft",
-        .path = .{ .path = "deps/zig-fcft/fcft.zig" },
+        .source = .{ .path = "deps/zig-fcft/fcft.zig" },
         .dependencies = &[_]std.build.Pkg{pixman},
     };
     wayprompt.addPackage(fcft);
@@ -49,7 +49,7 @@ pub fn build(b: *zbs.Builder) !void {
     wayprompt.step.dependOn(&scanner.step);
     wayprompt.addPackage(.{
         .name = "wayland",
-        .path = .{ .generated = &scanner.result },
+        .source = .{ .generated = &scanner.result },
     });
     wayprompt.linkLibC();
     wayprompt.linkSystemLibrary("wayland-client");
