@@ -59,7 +59,7 @@ const TextView = struct {
     pub fn new(str: []const u8, font: *fcft.Font) !TextView {
         if (str.len == 0) return error.EmptyString;
 
-        var height = @intCast(u31, font.height) - @intCast(u31, font.descent);
+        var height = @intCast(u31, font.height);
 
         const alloc = context.gpa.allocator();
         const len = try unicode.utf8CountCodepoints(str);
