@@ -140,6 +140,7 @@ fn parseCmdFlags() !void {
             try out_buffer.writer().print(
                 \\Usage: {s} [options..]
                 \\--title             Set the window title
+                \\--description       Set the description text.
                 \\--prompt            Set the prompt. Can only be used with '--get-pin'.
                 \\--error             Set the error message.
                 \\--button-ok         Display the ok button with the provided Text.
@@ -149,8 +150,8 @@ fn parseCmdFlags() !void {
                 \\--get-pin           Query for a password.
                 \\--help, -h          Dump help text and exit.
                 \\
-                \\Run as 'pinentry-wayprompt' to use a pinentry replacement.
-                \\Run as 'hiprompt-wayprompt' to use a himitsu prompter.
+                \\Run as 'pinentry-wayprompt' to use as pinentry replacement.
+                \\Run as 'hiprompt-wayprompt' to use as himitsu prompter.
                 \\
                 \\See wayprompt.1 for more information.
                 \\
