@@ -10,6 +10,7 @@ const wayland = @import("wayland.zig");
 const context = &@import("wayprompt.zig").context;
 
 var getpin: bool = false;
+var json: bool = false;
 
 pub fn main() !u8 {
     parseCmdFlags() catch |err| {
@@ -32,34 +33,51 @@ pub fn main() !u8 {
         }
     }
 
-    const stdout = io.getStdOut();
-    var out_buffer = io.bufferedWriter(stdout.writer());
-    const writer = out_buffer.writer();
-
     if (wayland.run(getpin)) |pin_maybe_null| {
-        try writer.writeAll("user-action: ok\n");
-        if (pin_maybe_null) |pin| {
-            debug.assert(getpin);
-            defer context.gpa.allocator().free(pin);
-            try writer.print("pin: {s}\n", .{pin});
-        } else if (getpin) {
-            try writer.writeAll("no pin\n");
-        }
+        try writeOutput("ok", pin_maybe_null);
+        if (pin_maybe_null) |pin| context.gpa.allocator().free(pin);
     } else |err| {
         switch (err) {
-            error.UserAbort => try writer.writeAll("user-action: cancel\n"),
-            error.UserNotOk => try writer.writeAll("user-action: not-ok\n"),
+            error.UserAbort => try writeOutput("cancel", null),
+            error.UserNotOk => try writeOutput("not-ok", null),
             else => {
                 log.err("unexpected error: {}", .{err});
                 return 1;
             },
         }
-        if (getpin) try writer.writeAll("no pin\n");
+    }
+
+    return 0;
+}
+
+fn writeOutput(comptime action: []const u8, pin: ?[]const u8) !void {
+    const stdout = io.getStdOut();
+    var out_buffer = io.bufferedWriter(stdout.writer());
+    const writer = out_buffer.writer();
+
+    if (json) {
+        try writer.writeAll("{\n");
+        try writer.writeAll("    \"user-action\": \"" ++ action ++ "\"");
+        if (pin) |p| {
+            debug.assert(getpin);
+            try writer.print(",\n    \"pin\": \"{s}\"\n", .{p});
+        } else if (getpin) {
+            try writer.writeAll(",\n    \"pin\": null\n");
+        } else {
+            try writer.writeAll("\n");
+        }
+        try writer.writeAll("}\n");
+    } else {
+        try writer.writeAll("user-action: " ++ action ++ "\n");
+        if (pin) |p| {
+            debug.assert(getpin);
+            try writer.print("pin: {s}\n", .{p});
+        } else if (getpin) {
+            try writer.writeAll("no pin\n");
+        }
     }
 
     try out_buffer.flush();
-
-    return 0;
 }
 
 fn parseCmdFlags() !void {
@@ -134,6 +152,8 @@ fn parseCmdFlags() !void {
             });
         } else if (mem.eql(u8, flag, "--get-pin")) {
             getpin = true;
+        } else if (mem.eql(u8, flag, "--json")) {
+            json = true;
         } else if (mem.eql(u8, flag, "--help") or mem.eql(u8, flag, "-h")) {
             const stdout = io.getStdOut();
             var out_buffer = io.bufferedWriter(stdout.writer());
@@ -148,6 +168,7 @@ fn parseCmdFlags() !void {
                 \\--button-cancel     Display the cancel button with the provided Text.
                 \\--wayland-display   Set the WAYLAND_DISPLAY to be used.
                 \\--get-pin           Query for a password.
+                \\--json              Format output (except error messages) in JSON.
                 \\--help, -h          Dump help text and exit.
                 \\
                 \\Run as 'pinentry-wayprompt' to use as pinentry replacement.
