@@ -8,7 +8,9 @@ const fmt = std.fmt;
 const math = std.math;
 const fs = std.fs;
 const meta = std.meta;
-const c = std.c;
+const c = @cImport({
+    @cInclude("syslog.h");
+});
 
 const pixman = @import("pixman");
 
@@ -282,7 +284,7 @@ pub fn log(
     const format_full = prefix ++ level_txt ++ ": " ++ format ++ "\n";
 
     if (context.syslog) {
-        nosuspend syslog(format_full, args) catch return;
+        nosuspend syslog(level, format_full, args) catch return;
     } else {
         const stderr = std.io.getStdErr().writer();
         nosuspend stderr.print(format_full, args) catch return;
@@ -290,10 +292,17 @@ pub fn log(
 }
 
 fn syslog(
+    level: logger.Level,
     comptime format: []const u8,
     args: anytype,
 ) !void {
+    const priority = switch (level) {
+        .debug => c.LOG_DEBUG,
+        .err => c.LOG_ERR,
+        .warn => c.LOG_WARNING,
+        .info => c.LOG_INFO,
+    };
     var buf: [1024]u8 = undefined;
     const str = try fmt.bufPrintZ(&buf, format, args);
-    c.syslog(5, str.ptr); // TODO find documentation on the priority arg.
+    c.syslog(priority, str.ptr);
 }
