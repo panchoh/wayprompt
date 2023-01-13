@@ -173,7 +173,7 @@ fn parseConfig() !void {
             .section => |sect| section = blk: {
                 const sec = meta.stringToEnum(Section, sect);
                 if (sec == null or sec.? == .none) {
-                    logger.err("{s}:{}: Unknown section '{}'.", .{ path, line, sec.? });
+                    logger.err("{s}:{}: Unknown section '{s}'.", .{ path, line, sect });
                     return error.BadConfig;
                 }
                 break :blk sec.?;
