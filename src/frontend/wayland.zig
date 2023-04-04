@@ -438,6 +438,9 @@ const Seat = struct {
                 const keysym = self.xkb_state.?.keyGetOneSym(keycode);
                 if (keysym == .NoSymbol) return;
                 switch (@enumToInt(keysym)) {
+                    xkb.Keysym.leftarrow, xkb.Keysym.leftarrow => {
+                        // TODO select button with arrow keys
+                    },
                     xkb.Keysym.Return => {
                         wayland_context.loop = false;
                         return;

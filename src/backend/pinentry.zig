@@ -9,8 +9,8 @@ const fmt = std.fmt;
 const debug = std.debug;
 const log = std.log;
 
-const wayland = @import("wayland.zig");
-const tty = @import("tty.zig");
+const Frontend = @import("../frontend.zig").Frontend;
+const FrontendImpl = @import("../frontend.zig").FrontendImpl;
 
 const context = &@import("wayprompt.zig").context;
 
@@ -19,15 +19,28 @@ var default_cancel: ?[]const u8 = null;
 var default_yes: ?[]const u8 = null;
 var default_no: ?[]const u8 = null;
 
+var frontend: FrontendImpl = undefined;
+
 pub fn main() !u8 {
     const stdout = io.getStdOut();
     const stdin = io.getStdIn();
 
-    var fds: [1]os.pollfd = undefined;
-    fds[0] = .{
-        .fd = stdin.handle,
-        .events = os.POLL.IN,
-        .revents = undefined,
+    var _frontend = Frontend{};
+    frontend = try _frontend.getInitFrontend();
+    defer frontend.deinit();
+
+    var fds: [2]os.pollfd = undefined;
+    fds = .{
+        .{
+            .fd = stdin.handle,
+            .events = os.POLL.IN,
+            .revents = undefined,
+        },
+        .{
+            .fd = frontend.getFd(),
+            .events = os.POLL.IN,
+            .revents = undefined,
+        },
     };
 
     // Assuan messages are limited to 1000 bytes per spec. However,
@@ -52,17 +65,28 @@ pub fn main() !u8 {
 
     while (context.loop) {
         _ = try os.poll(&fds, -1);
-        const read = try stdin.read(&in_buffer);
-        if (read == 0) break;
-        // Behold: We also read '\n', so let's get rid of that here handily by
-        // just not including it in the slice.
-        try parseInput(out_buffer.writer(), in_buffer[0 .. read - 1]);
-        out_buffer.flush() catch |err| {
-            // gpg-agent recently has become very eager to close the pipe after
-            // sending "bye", so sending it an "OK" response will fail.
-            if (context.loop == false and err == error.BrokenPipe) break;
-            return err;
-        };
+        if ((fds[0].revents & os.POLL.IN) > 0) {
+            const read = try stdin.read(&in_buffer);
+            if (read == 0) break;
+            // Behold: We also read '\n', so let's get rid of that here handily by
+            // just not including it in the slice.
+            try parseInput(out_buffer.writer(), in_buffer[0 .. read - 1]);
+            out_buffer.flush() catch |err| {
+                // gpg-agent recently has become very eager to close the pipe after
+                // sending "bye", so sending it an "OK" response will fail.
+                if (context.loop == false and err == error.BrokenPipe) break;
+                return err;
+            };
+        }
+        if ((fds[1].revents & os.POLL.IN) > 0) {
+            const ev = frontend.handleEvent catch return 1;
+            switch (ev) {
+                .none => {},
+                else => {
+                    // TODO XXX
+                },
+            }
+        }
     }
 
     return 0;

@@ -6,8 +6,8 @@ const io = std.io;
 const meta = std.meta;
 const log = std.log.scoped(.wayprompt);
 
-const wayland = @import("wayland.zig");
-const context = &@import("wayprompt.zig").context;
+const Frontend = @import"../frontend.zig").Frontend;
+const context = &@import("../wayprompt.zig").context;
 
 var getpin: bool = false;
 var json: bool = false;
@@ -33,16 +33,26 @@ pub fn main() !u8 {
         }
     }
 
-    if (wayland.run(getpin)) |pin_maybe_null| {
-        try writeOutput("ok", pin_maybe_null);
-        if (pin_maybe_null) |pin| context.gpa.allocator().free(pin);
-    } else |err| {
-        switch (err) {
-            error.UserAbort => try writeOutput("cancel", null),
-            error.UserNotOk => try writeOutput("not-ok", null),
+    var _frontend = Frontend{};
+    const frontend = try _frontend.getInitFrontend();
+    defer frontend.deinit();
+
+    var fds: [1]os.pollfd = .{.{
+        .fd = frontend.getFd(),
+        .events = os.POLL.IN,
+        .revents = undefined,
+    }};
+
+    frontend.enterMode(if (getpin) .getpin else .message) catch return 1;
+
+    while (context.loop) {
+        _ = try os.poll(&fds, -1);
+        const ev = frontend.handleEvent() catch return 1;
+        switch (ev) {
+            .none => {},
             else => {
-                log.err("unexpected error: {}", .{err});
-                return 1;
+                try writeOutput(@tagName(ev), context.pin.slice());
+                context.loop = false;
             },
         }
     }

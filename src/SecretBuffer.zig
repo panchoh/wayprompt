@@ -86,11 +86,9 @@ pub fn deleteBackwards(self: *Self) void {
     unreachable;
 }
 
-pub fn copySlice(self: *Self) !?[]const u8 {
-    const gpa = context.gpa.allocator();
+pub fn slice(self: *Self) !?[]const u8 {
     if (self.str.items.len > 0) {
-        const ret = try gpa.dupe(u8, self.str.items[0..]);
-        return ret;
+        return self.str.items[0..];
     } else {
         return null;
     }
