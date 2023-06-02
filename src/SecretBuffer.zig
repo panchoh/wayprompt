@@ -6,8 +6,6 @@ const mem = std.mem;
 const os = std.os;
 const unicode = std.unicode;
 
-const context = &@import("wayprompt.zig").context;
-
 const Self = @This();
 
 buffer: []align(mem.page_size) u8,
@@ -17,10 +15,9 @@ len: usize,
 
 extern fn mlock(addr: *const anyopaque, len: usize) c_int;
 
-pub fn new() !Self {
-    const gpa = context.gpa.allocator();
+pub fn new(alloc: mem.Allocator) !Self {
     var ret: Self = undefined;
-    ret.buffer = try gpa.alignedAlloc(u8, mem.page_size, 1024);
+    ret.buffer = try alloc.alignedAlloc(u8, mem.page_size, 1024);
     ret.fba = heap.FixedBufferAllocator.init(ret.buffer);
     ret.str = .{};
     ret.len = 0;
@@ -59,9 +56,8 @@ pub fn new() !Self {
     return ret;
 }
 
-pub fn deinit(self: *Self) void {
-    const gpa = context.gpa.allocator();
-    gpa.free(self.buffer);
+pub fn deinit(self: *Self, alloc: mem.Allocator) void {
+    alloc.free(self.buffer);
     self.str = undefined;
     self.len = undefined;
 }
@@ -86,11 +82,9 @@ pub fn deleteBackwards(self: *Self) void {
     unreachable;
 }
 
-pub fn copySlice(self: *Self) !?[]const u8 {
-    const gpa = context.gpa.allocator();
+pub fn slice(self: *Self) ?[]const u8 {
     if (self.str.items.len > 0) {
-        const ret = try gpa.dupe(u8, self.str.items[0..]);
-        return ret;
+        return self.str.items[0..];
     } else {
         return null;
     }

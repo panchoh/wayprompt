@@ -6,29 +6,76 @@ const os = std.os;
 const io = std.io;
 const fs = std.fs;
 const fmt = std.fmt;
+const heap = std.heap;
 const debug = std.debug;
-const log = std.log;
 
-const wayland = @import("wayland.zig");
-const tty = @import("tty.zig");
+pub const log = @import("log.zig").log;
+const logger = std.log.scoped(.wayprompt);
+var use_syslog = &@import("log.zig").use_syslog;
 
-const context = &@import("wayprompt.zig").context;
+const Frontend = @import("Frontend.zig");
+const SecretBuffer = @import("SecretBuffer.zig");
+const Config = @import("Config.zig");
 
 var default_ok: ?[]const u8 = null;
 var default_cancel: ?[]const u8 = null;
 var default_yes: ?[]const u8 = null;
 var default_no: ?[]const u8 = null;
 
+var loop: bool = true;
+var secret: SecretBuffer = undefined;
+var config: Config = undefined;
+var frontend: Frontend = undefined;
+var gpa: heap.GeneralPurposeAllocator(.{}) = .{};
+
+/// Not quite the same as Frontend.Mode, as message and confirm behabe slightly
+/// differently.
+const Mode = enum { none, getpin, message, confirm };
+var mode: Mode = .none;
+
 pub fn main() !u8 {
+    use_syslog.* = true;
+
+    const alloc = gpa.allocator();
+    defer _ = gpa.deinit();
+
+    defer {
+        if (default_ok) |str| alloc.free(str);
+        if (default_cancel) |str| alloc.free(str);
+        if (default_yes) |str| alloc.free(str);
+        if (default_no) |str| alloc.free(str);
+    }
+
+    secret = try SecretBuffer.new(alloc);
+    defer secret.deinit(alloc);
+
+    config = .{
+        .secbuf = &secret,
+        .alloc = alloc,
+        .allow_tty_fallback = true,
+    };
+    defer config.reset(alloc);
+
+    config.parse(alloc) catch return 1;
+
     const stdout = io.getStdOut();
     const stdin = io.getStdIn();
 
-    var fds: [1]os.pollfd = undefined;
-    fds[0] = .{
+    const fds_stdin = 0;
+    const fds_frontend = 1;
+    var fds: [2]os.pollfd = undefined;
+    fds[fds_stdin] = .{
         .fd = stdin.handle,
         .events = os.POLL.IN,
         .revents = undefined,
     };
+
+    fds[fds_frontend] = .{
+        .fd = try frontend.init(&config),
+        .events = os.POLL.IN,
+        .revents = undefined,
+    };
+    defer frontend.deinit();
 
     // Assuan messages are limited to 1000 bytes per spec. However,
     // documentation for the pinentry commands states that string can be up to
@@ -38,34 +85,138 @@ pub fn main() !u8 {
     // default-sized (2048) buffer for outgoing messages.
     var in_buffer: [1024]u8 = undefined;
     var out_buffer = io.bufferedWriter(stdout.writer());
-
-    try out_buffer.writer().writeAll("OK wayprompt is pleased to meet you\n");
+    const writer = out_buffer.writer();
+    try writer.writeAll("OK wayprompt is pleased to meet you\n");
     try out_buffer.flush();
 
-    defer {
-        const alloc = context.gpa.allocator();
-        if (default_ok) |str| alloc.free(str);
-        if (default_cancel) |str| alloc.free(str);
-        if (default_yes) |str| alloc.free(str);
-        if (default_no) |str| alloc.free(str);
-    }
+    while (loop) {
+        if (frontend.flush()) |ev| {
+            try handleFrontendEvent(out_buffer.writer(), ev);
+        } else |err| {
+            logger.err("unexpected error: {s}", .{@errorName(err)});
+            try writer.writeAll("ERR 83886179 Operation cancelled\n");
+        }
 
-    while (context.loop) {
         _ = try os.poll(&fds, -1);
-        const read = try stdin.read(&in_buffer);
-        if (read == 0) break;
-        // Behold: We also read '\n', so let's get rid of that here handily by
-        // just not including it in the slice.
-        try parseInput(out_buffer.writer(), in_buffer[0 .. read - 1]);
+
+        if (fds[fds_stdin].revents & os.POLL.IN != 0) {
+            const read = try stdin.read(&in_buffer);
+            if (read == 0) break;
+            // Behold: We also read '\n', so let's get rid of that here handily
+            // by just not including it in the slice.
+            try parseInput(out_buffer.writer(), in_buffer[0 .. read - 1]);
+        }
+
+        if (fds[fds_frontend].revents & os.POLL.IN != 0) {
+            if (frontend.handleEvent()) |ev| {
+                try handleFrontendEvent(out_buffer.writer(), ev);
+            } else |err| {
+                logger.err("unexpected error: {s}", .{@errorName(err)});
+                try writer.writeAll("ERR 83886179 Operation cancelled\n");
+            }
+        } else {
+            try frontend.noEvent();
+        }
+
         out_buffer.flush() catch |err| {
             // gpg-agent recently has become very eager to close the pipe after
             // sending "bye", so sending it an "OK" response will fail.
-            if (context.loop == false and err == error.BrokenPipe) break;
+            if (loop == false and err == error.BrokenPipe) break;
             return err;
         };
     }
 
     return 0;
+}
+
+fn handleFrontendEvent(writer: anytype, ev: Frontend.Event) !void {
+    debug.assert((mode == .none and ev == .none) or mode != .none);
+    switch (ev) {
+        .none => return,
+        .user_abort => try writer.writeAll("ERR 83886179 Operation cancelled\n"),
+        .user_notok => try writer.writeAll("ERR 83886194 not confirmed\n"),
+        .user_ok => {
+            if (mode == .getpin) {
+                // Technically there is a difference between pressing enter on
+                // an empty prompt and the user aborting. However, gpg-agent
+                // apparently treats both equally. We do it properly of course,
+                // because we're pedantic.
+                if (secret.slice()) |s| {
+                    try writer.print("D {s}\nEND\nOK\n", .{s});
+                } else {
+                    try writer.writeAll("OK\n");
+                }
+            } else {
+                try writer.writeAll("OK\n");
+            }
+        },
+    }
+
+    // The errormessage must automatically reset after every GETPIN or CONFIRM action.
+    if (mode == .getpin or mode == .confirm) {
+        if (config.errmessage) |e| {
+            const alloc = gpa.allocator();
+            alloc.free(e);
+            config.errmessage = null;
+        }
+    }
+
+    mode = .none;
+
+    // Reset secret.
+    const alloc = gpa.allocator();
+    secret.deinit(alloc);
+    secret = try SecretBuffer.new(alloc);
+}
+
+fn getpin() !void {
+    debug.assert(mode == .none);
+
+    // If we don't have buttons defined, use the default ones. Note: This
+    // transfers ownership of the string. This means they will be freed when
+    // context is deinit'd.
+    if (config.ok == null and default_ok != null) {
+        config.ok = default_ok.?;
+        default_ok = null;
+    }
+    if (config.cancel == null and default_cancel != null) {
+        config.cancel = default_cancel.?;
+        default_cancel = null;
+    }
+
+    mode = .getpin;
+    try frontend.enterMode(.getpin);
+}
+
+fn message(writer: anytype) !void {
+    debug.assert(mode == .none);
+
+    if (config.title == null and config.description == null and config.errmessage == null) {
+        try writer.writeAll("OK\n");
+        return;
+    }
+
+    mode = .message;
+    try frontend.enterMode(.message);
+}
+
+fn confirm() !void {
+    debug.assert(mode == .none);
+
+    // If we don't have buttons defined, use the default ones. Note: This
+    // transfers ownership of the string. This means they will be freed when
+    // context is deinit'd.
+    if (config.ok == null and default_yes != null) {
+        config.ok = default_yes.?;
+        default_yes = null;
+    }
+    if (config.cancel == null and default_no != null) {
+        config.cancel = default_no.?;
+        default_no = null;
+    }
+
+    mode = .message;
+    try frontend.enterMode(.message);
 }
 
 fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []const u8) !void {
@@ -92,7 +243,12 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
     //   widely used implementation.
     // </rant>
 
-    const alloc = context.gpa.allocator();
+    // We are not supposed to get any messages (other than password strength
+    // indicator messages) while displaying a prompt.
+    // TODO or are we?
+    if (mode != .none) return;
+
+    const alloc = gpa.allocator();
     var it = mem.tokenize(u8, line, &ascii.spaces);
     const command = it.next() orelse return;
     if (ascii.eqlIgnoreCase(command, "settitle")) {
@@ -113,11 +269,11 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
         // TODO it's possible that the gpg-apgent requests us to ask for the
         //      pin twice (f.e. when the user creates a new one, I imagine).
         //      This needs support in the UI.
-        try getPin(writer);
+        try getpin();
     } else if (ascii.eqlIgnoreCase(command, "confirm")) {
         // TODO this can optionally have the "--one-button" option, in which
         //      case it effectively functions like MESSAGE.
-        try confirm(writer);
+        try confirm();
     } else if (ascii.eqlIgnoreCase(command, "message")) {
         try message(writer);
     } else if (ascii.eqlIgnoreCase(command, "getinfo")) {
@@ -136,27 +292,45 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
         }
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "bye")) {
-        context.loop = false;
+        loop = false;
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "option")) {
         if (it.next()) |option| {
             if (getOption("putenv=WAYLAND_DISPLAY=", option, line)) |o| {
-                if (context.wayland_display) |w| alloc.free(w);
-                context.wayland_display = try alloc.dupeZ(u8, o);
+                if (config.wayland_display) |w| {
+                    alloc.free(w);
+                    config.wayland_display = null;
+                }
+                config.wayland_display = try alloc.dupeZ(u8, o);
             } else if (getOption("ttyname=", option, line)) |o| {
-                if (context.tty_name) |w| alloc.free(w);
-                context.tty_name = try alloc.dupeZ(u8, o);
+                if (config.tty_name) |w| {
+                    alloc.free(w);
+                    config.tty_name = null;
+                }
+                config.tty_name = try alloc.dupeZ(u8, o);
             } else if (getOption("default-ok=", option, line)) |o| {
-                if (default_ok) |w| alloc.free(w);
+                if (default_ok) |w| {
+                    alloc.free(w);
+                    default_ok = null;
+                }
                 default_ok = try pinentryDupe(o, true);
             } else if (getOption("default-cancel=", option, line)) |o| {
-                if (default_cancel) |w| alloc.free(w);
+                if (default_cancel) |w| {
+                    alloc.free(w);
+                    default_cancel = null;
+                }
                 default_cancel = try pinentryDupe(o, true);
             } else if (getOption("default-yes=", option, line)) |o| {
-                if (default_yes) |w| alloc.free(w);
+                if (default_yes) |w| {
+                    alloc.free(w);
+                    default_yes = null;
+                }
                 default_yes = try pinentryDupe(o, true);
             } else if (getOption("default-no=", option, line)) |o| {
-                if (default_no) |w| alloc.free(w);
+                if (default_no) |w| {
+                    alloc.free(w);
+                    default_no = null;
+                }
                 default_no = try pinentryDupe(o, true);
             }
         }
@@ -166,7 +340,7 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
         // unknown ones would be: "ERR 83886254 Unknown option".
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "reset")) {
-        context.reset();
+        config.reset(alloc);
         try writer.writeAll("OK\n");
     } else if (ascii.eqlIgnoreCase(command, "setkeyinfo")) {
         // This request sets a key identifier to be used for key-caching
@@ -218,167 +392,15 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
     }
 }
 
-fn getPin(writer: anytype) !void {
-    // If we don't have buttons defined, use the default ones. Note: This
-    // transfers ownership of the string. This means they will be freed when
-    // context is deinit'd.
-    if (context.ok == null and default_ok != null) {
-        context.ok = default_ok.?;
-        default_ok = null;
-    }
-    if (context.cancel == null and default_cancel != null) {
-        context.cancel = default_cancel.?;
-        default_cancel = null;
-    }
-
-    const alloc = context.gpa.allocator();
-
-    if (wayland.run(true)) |pin| {
-        try dumpPin(writer, pin);
-    } else |err| {
-        // TODO error.UserNotOk should be handled here as well
-        // The client will ignore all messages starting with #, however they
-        // should still be logged by the gpg-agent, given that the right
-        // debug options are enabled. This means we can use this to insert
-        // arbitrary messages into the logs and therefore have proper error
-        // logging.
-        //
-        // Technically there is a difference between pressing enter on an
-        // empty prompt and the user aborting. However, gpg-agent apparently
-        // treats both equally. We do it properly of course, because we're
-        // pedantic. Anyway, that's why error.UserAbort exists and why we
-        // don't print it because it's not /really/ an error.
-        if (err == error.NoWaylandDisplay or err == error.ConnectFailed) {
-            log.err("error while attempting to display wayland prompt: '{}'. Switching to TTY fallback.", .{err});
-            if (tty.run(true)) |pin| {
-                try dumpPin(writer, pin);
-            } else |e| {
-                if (e != error.UserAbort and e != error.UserNotOk) {
-                    log.err("error while attempting to display TTY prompt: '{}'", .{e});
-                }
-                try errMessage(writer, e);
-            }
-        } else {
-            if (err != error.UserAbort and err != error.UserNotOk) {
-                log.err("error while attempting to display wayland prompt: '{}'", .{err});
-            }
-            try errMessage(writer, err);
-        }
-    }
-
-    // The errormessage must automatically reset after every GETPIN or
-    // CONFIRM action.
-    if (context.errmessage) |e| {
-        alloc.free(e);
-        context.errmessage = null;
-    }
-}
-
+// XXX
 fn dumpPin(writer: anytype, pin: ?[]const u8) !void {
-    const alloc = context.gpa.allocator();
+    const alloc = gpa.allocator();
     if (pin) |p| {
         defer alloc.free(p);
         try writer.print("D {s}\nEND\nOK\n", .{p});
     } else {
         try writer.writeAll("OK\n");
     }
-}
-
-fn message(writer: anytype) !void {
-    if (context.title == null and context.description == null and context.errmessage == null) {
-        try writer.writeAll("OK\n");
-        return;
-    }
-
-    if (wayland.run(false)) |ret| {
-        debug.assert(ret == null);
-        try writer.writeAll("OK\n");
-    } else |err| {
-        if (err == error.NoWaylandDisplay or err == error.ConnectFailed) {
-            log.err("error while attempting to display wayland message: '{}'. Switching to TTY fallback.", .{err});
-            if (tty.run(false)) |r| {
-                debug.assert(r == null);
-                try writer.writeAll("OK\n");
-            } else |e| {
-                if (e != error.UserAbort and e != error.UserNotOk) {
-                    log.err("error while attempting to display TTY message: '{}'", .{e});
-                }
-                try errMessage(writer, e);
-            }
-        } else {
-            if (err != error.UserAbort and err != error.UserNotOk) {
-                log.err("error while attempting to display wayland message: '{}'", .{err});
-            }
-            try errMessage(writer, err);
-        }
-    }
-}
-
-fn confirm(writer: anytype) !void {
-    // If we don't have buttons defined, use the default ones. Note: This
-    // transfers ownership of the string. This means they will be freed when
-    // context is deinit'd.
-    if (context.ok == null and default_yes != null) {
-        context.ok = default_yes.?;
-        default_yes = null;
-    }
-    if (context.cancel == null and default_no != null) {
-        context.cancel = default_no.?;
-        default_no = null;
-    }
-
-    if (wayland.run(false)) |ret| {
-        debug.assert(ret == null);
-        try writer.writeAll("OK\n");
-    } else |err| {
-        if (err == error.NoWaylandDisplay or err == error.ConnectFailed) {
-            log.err("error while attempting to display wayland confirm: '{}'. Switching to TTY fallback.", .{err});
-            if (tty.run(false)) |r| {
-                debug.assert(r == null);
-                try writer.writeAll("OK\n");
-            } else |e| {
-                if (e != error.UserAbort and e != error.UserNotOk) {
-                    log.err("error while attempting to display TTY confirm: '{}'", .{e});
-                }
-                try errMessage(writer, e);
-            }
-        } else {
-            if (err != error.UserAbort and err != error.UserNotOk) {
-                log.err("error while attempting to display wayland confirm: '{}'", .{err});
-            }
-            try errMessage(writer, err);
-        }
-    }
-
-    // The errormessage must automatically reset after every GETPIN or
-    // CONFIRM action.
-    if (context.errmessage) |e| {
-        const alloc = context.gpa.allocator();
-        alloc.free(e);
-        context.errmessage = null;
-    }
-}
-
-// TODO the name of this function is confusing, find a better one
-fn errMessage(writer: anytype, err: anyerror) !void {
-    switch (err) {
-        error.UserAbort => try writer.writeAll("ERR 83886179 Operation cancelled\n"),
-        error.UserNotOk => try writer.writeAll("ERR 83886194 not confirmed\n"),
-        else => {
-            try writer.print("# Error: {s}\n", .{@errorName(err)});
-            try writer.writeAll("ERR 83886179 Operation cancelled\n");
-        },
-    }
-}
-
-fn setString(writer: anytype, comptime name: []const u8, value: []const u8) !void {
-    const alloc = context.gpa.allocator();
-    if (@field(context.*, name)) |f| {
-        @field(context.*, name) = null;
-        alloc.free(f);
-    }
-    @field(context.*, name) = try pinentryDupe(value, false);
-    try writer.writeAll("OK\n");
 }
 
 fn getOption(comptime opt: []const u8, arg: []const u8, line: []const u8) ?[]const u8 {
@@ -388,9 +410,19 @@ fn getOption(comptime opt: []const u8, arg: []const u8, line: []const u8) ?[]con
     return null;
 }
 
+fn setString(writer: anytype, comptime name: []const u8, value: []const u8) !void {
+    const alloc = gpa.allocator();
+    if (@field(config, name)) |f| {
+        @field(config, name) = null;
+        alloc.free(f);
+    }
+    @field(config, name) = try pinentryDupe(value, false);
+    try writer.writeAll("OK\n");
+}
+
 /// Some characters are escaped in assuan messages.
 fn pinentryDupe(str: []const u8, button: bool) ![]const u8 {
-    const alloc = context.gpa.allocator();
+    const alloc = gpa.allocator();
 
     var len: usize = str.len;
     for (str) |ch| {

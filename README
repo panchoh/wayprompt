@@ -1,8 +1,0 @@
-wayprompt - multi-purpose prompt tool for Wayland
-
-To use as a pinentry replacement, run as 'pinentry-wayprompt'.
-To use as a himitsu prompter, run as 'hiprompt-wayprompt'. (TODO)
-To use as a generic prompter for scripts, run as 'wayprompt-cli'. (TODO)
-
-Requires the compositor to support the layershell.
-Dependes on lib-wayland, xkbcommon and pixman.
