@@ -454,8 +454,10 @@ const Seat = struct {
                         return;
                     },
                     xkb.Keysym.BackSpace => {
-                        self.w.config.secbuf.deleteBackwards();
-                        self.w.surface.?.render() catch self.w.abort(error.OutOfMemory);
+                        if (self.w.mode == .getpin) {
+                            self.w.config.secbuf.deleteBackwards();
+                            self.w.surface.?.render() catch self.w.abort(error.OutOfMemory);
+                        }
                         return;
                     },
                     xkb.Keysym.Delete => return,
