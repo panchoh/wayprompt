@@ -32,6 +32,10 @@ pub fn build(b: *zbs.Builder) !void {
     wayprompt_pinentry.setBuildMode(mode);
     wayprompt_pinentry.addOptions("build_options", options);
     try exeSetup(scanner, wayprompt_pinentry);
+
+    b.installFile("doc/wayprompt.1", "share/man/man1/wayprompt.1");
+    b.installFile("doc/pinentry-wayprompt.1", "share/man/man1/pinentry-wayprompt.1");
+    b.installFile("doc/wayprompt.5", "share/man/man5/wayprompt.5");
 }
 
 fn exeSetup(scanner: *ScanProtocolsStep, exe: *zbs.LibExeObjStep) !void {

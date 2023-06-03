@@ -182,22 +182,23 @@ fn parseCmdFlags(cfg: *Config) !void {
             var out_buffer = io.bufferedWriter(stdout.writer());
             try out_buffer.writer().print(
                 \\Usage: {s} [options..]
-                \\--title             Set the window title
-                \\--description       Set the description text.
-                \\--prompt            Set the prompt. Can only be used with '--get-pin'.
-                \\--error             Set the error message.
-                \\--button-ok         Display the ok button with the provided Text.
-                \\--button-no-ok      Display the not-ok button with the provided Text.
-                \\--button-cancel     Display the cancel button with the provided Text.
-                \\--wayland-display   Set the WAYLAND_DISPLAY to be used.
-                \\--get-pin           Query for a password.
-                \\--json              Format output (except error messages) in JSON.
-                \\--help, -h          Dump help text and exit.
+                \\  --title           <string>   Set the window title
+                \\  --description     <string>   Set the description text.
+                \\  --prompt          <string>   Set the prompt. Can only be used with '--get-pin'.
+                \\  --error           <string>   Set the error message.
+                \\  --button-ok       <string>   Display the ok button with the provided Text.
+                \\  --button-no-ok    <string>   Display the not-ok button with the provided Text.
+                \\  --button-cancel   <string>   Display the cancel button with the provided Text.
+                \\  --wayland-display <string>   Set the WAYLAND_DISPLAY to be used.
+                \\  --get-pin                    Query for a password.
+                \\  --json                       Format output (except error messages) in JSON.
+                \\  --help, -h                   Dump help text and exit.
                 \\
-                \\Run as 'pinentry-wayprompt' to use as pinentry replacement.
-                \\Run as 'hiprompt-wayprompt' to use as himitsu prompter.
-                \\
-                \\See wayprompt.1 for more information.
+                \\This is the command line version of wayprompt, offering a simple API
+                \\to use it for example in shell scripts. Read wayprompt.1 for more
+                \\information, including how to configure wayprompt and available
+                \\alternative versions. wayprompt is developed and maintained by
+                \\Leon Henrik Plickat <leonhenrik.plickat@stud.uni-goettingen.de>.
                 \\
             , .{os.argv[0]});
             try out_buffer.flush();
