@@ -15,19 +15,18 @@ len: usize,
 
 extern fn mlock(addr: *const anyopaque, len: usize) c_int;
 
-pub fn new(alloc: mem.Allocator) !Self {
-    var ret: Self = undefined;
-    ret.buffer = try alloc.alignedAlloc(u8, mem.page_size, 1024);
-    ret.fba = heap.FixedBufferAllocator.init(ret.buffer);
-    ret.str = .{};
-    ret.len = 0;
+pub fn init(self: *Self, alloc: mem.Allocator) !void {
+    self.buffer = try alloc.alignedAlloc(u8, mem.page_size, 1024);
+    self.fba = heap.FixedBufferAllocator.init(self.buffer);
+    self.str = .{};
+    self.len = 0;
 
     // Calling mlock(3) prevents the memory page we use for the password buffer
     // to be swapped.
     {
         var attempts: usize = 0;
         while (attempts < 10) : (attempts += 1) {
-            const res = mlock(ret.buffer.ptr, ret.buffer.len);
+            const res = mlock(self.buffer.ptr, self.buffer.len);
             switch (os.errno(res)) {
                 .SUCCESS => break,
                 .AGAIN => continue,
@@ -42,7 +41,7 @@ pub fn new(alloc: mem.Allocator) !Self {
     if (builtin.target.os.tag == .linux) {
         var attempts: usize = 0;
         while (attempts < 10) : (attempts += 1) {
-            const res = os.system.madvise(ret.buffer.ptr, ret.buffer.len, os.MADV.DONTDUMP);
+            const res = os.system.madvise(self.buffer.ptr, self.buffer.len, os.MADV.DONTDUMP);
             switch (os.errno(res)) {
                 .SUCCESS => break,
                 .AGAIN => continue,
@@ -52,14 +51,17 @@ pub fn new(alloc: mem.Allocator) !Self {
             return error.MadvideFailedTooOften;
         }
     }
-
-    return ret;
 }
 
 pub fn deinit(self: *Self, alloc: mem.Allocator) void {
     alloc.free(self.buffer);
     self.str = undefined;
     self.len = undefined;
+}
+
+pub fn reset(self: *Self, alloc: mem.Allocator) !void {
+    self.deinit(alloc);
+    try self.init(alloc);
 }
 
 pub fn appendSlice(self: *Self, str: []const u8) !void {

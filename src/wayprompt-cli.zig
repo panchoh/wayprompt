@@ -16,20 +16,25 @@ const Config = @import("Config.zig");
 var getpin: bool = false;
 var json: bool = false;
 
+var secret: SecretBuffer = undefined;
+var config: Config = undefined;
+var frontend: Frontend = undefined;
 var gpa: heap.GeneralPurposeAllocator(.{}) = .{};
 var arena: heap.ArenaAllocator = undefined;
 
 pub fn main() !u8 {
-    arena = heap.ArenaAllocator.init(gpa.allocator());
+    const alloc = gpa.allocator();
     defer _ = gpa.deinit();
+
+    arena = heap.ArenaAllocator.init(gpa.allocator());
     defer arena.deinit();
 
-    var cfg: Config = .{
+    config = .{
         .secbuf = undefined,
-        .alloc = gpa.allocator(),
+        .alloc = alloc,
     };
 
-    parseCmdFlags(&cfg) catch |err| {
+    parseCmdFlags() catch |err| {
         switch (err) {
             error.DumpedUsage => return 0,
             error.UnknownFlag,
@@ -41,29 +46,27 @@ pub fn main() !u8 {
     };
 
     if (!getpin) {
-        if (cfg.prompt != null) {
+        if (config.prompt != null) {
             logger.err("you may not set a prompt when not querying for a password.", .{});
             return 1;
         }
 
-        if (cfg.title == null and cfg.description == null and cfg.errmessage == null) {
+        if (config.title == null and config.description == null and config.errmessage == null) {
             logger.err("at least one of title, description or error need to be set when not querying for a password.", .{});
             return 1;
         }
     }
 
-    cfg.parse(gpa.allocator()) catch return 1;
+    config.parse(alloc) catch return 1;
 
-    var secret: SecretBuffer = undefined;
     if (getpin) {
-        secret = try SecretBuffer.new(gpa.allocator());
-        cfg.secbuf = &secret;
+        try secret.init(alloc);
+        config.secbuf = &secret;
     }
-    defer if (getpin) secret.deinit(gpa.allocator());
+    defer if (getpin) secret.deinit(alloc);
 
-    var frontend: Frontend = undefined;
     var fds: [1]os.pollfd = .{.{
-        .fd = try frontend.init(&cfg),
+        .fd = try frontend.init(&config),
         .events = os.POLL.IN,
         .revents = undefined,
     }};
@@ -152,27 +155,27 @@ const FlagIt = struct {
     }
 };
 
-fn parseCmdFlags(cfg: *Config) !void {
+fn parseCmdFlags() !void {
     const alloc = arena.allocator();
 
     var it = FlagIt.new(&os.argv);
     while (it.next()) |flag| {
         if (mem.eql(u8, flag, "--title")) {
-            try dupeArg(alloc, &it, &cfg.title, "--title");
+            try dupeArg(alloc, &it, &config.title, "--title");
         } else if (mem.eql(u8, flag, "--description")) {
-            try dupeArg(alloc, &it, &cfg.description, "--description");
+            try dupeArg(alloc, &it, &config.description, "--description");
         } else if (mem.eql(u8, flag, "--prompt")) {
-            try dupeArg(alloc, &it, &cfg.prompt, "--prompt");
+            try dupeArg(alloc, &it, &config.prompt, "--prompt");
         } else if (mem.eql(u8, flag, "--error")) {
-            try dupeArg(alloc, &it, &cfg.errmessage, "--error");
+            try dupeArg(alloc, &it, &config.errmessage, "--error");
         } else if (mem.eql(u8, flag, "--wayland-display")) {
-            try dupeArg(alloc, &it, &cfg.wayland_display, "--wayland-display");
+            try dupeArg(alloc, &it, &config.wayland_display, "--wayland-display");
         } else if (mem.eql(u8, flag, "--button-ok")) {
-            try dupeArg(alloc, &it, &cfg.ok, "--button-ok");
+            try dupeArg(alloc, &it, &config.ok, "--button-ok");
         } else if (mem.eql(u8, flag, "--button-not-ok")) {
-            try dupeArg(alloc, &it, &cfg.notok, "--button-not-ok");
+            try dupeArg(alloc, &it, &config.notok, "--button-not-ok");
         } else if (mem.eql(u8, flag, "--button-cancel")) {
-            try dupeArg(alloc, &it, &cfg.cancel, "--button-cancel");
+            try dupeArg(alloc, &it, &config.cancel, "--button-cancel");
         } else if (mem.eql(u8, flag, "--get-pin")) {
             getpin = true;
         } else if (mem.eql(u8, flag, "--json")) {

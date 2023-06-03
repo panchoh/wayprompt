@@ -46,7 +46,7 @@ pub fn main() !u8 {
         if (default_no) |str| alloc.free(str);
     }
 
-    secret = try SecretBuffer.new(alloc);
+    try secret.init(alloc);
     defer secret.deinit(alloc);
 
     config = .{
@@ -163,10 +163,8 @@ fn handleFrontendEvent(writer: anytype, ev: Frontend.Event) !void {
 
     mode = .none;
 
-    // Reset secret.
     const alloc = gpa.allocator();
-    secret.deinit(alloc);
-    secret = try SecretBuffer.new(alloc);
+    try secret.reset(alloc);
 }
 
 fn getpin() !void {
