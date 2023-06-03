@@ -99,9 +99,16 @@ pub fn handleEvent(self: *TTY) !Frontend.Event {
                 ret = .user_notok;
             }
             break;
+        } else if (in.eqlDescription("C-w") or in.eqlDescription("C-backspace")) {
+            if (self.mode == .getpin) {
+                try self.config.secbuf.reset(self.config.alloc);
+                try self.render();
+            }
         } else if (in.eqlDescription("backspace")) {
-            self.config.secbuf.deleteBackwards();
-            try self.render();
+            if (self.mode == .getpin) {
+                self.config.secbuf.deleteBackwards();
+                try self.render();
+            }
         } else if (self.mode == .getpin and in.content == .codepoint) {
             if (in.mod_alt or in.mod_ctrl or in.mod_super) continue;
             const cp = in.content.codepoint;

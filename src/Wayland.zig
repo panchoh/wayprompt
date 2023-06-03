@@ -448,34 +448,50 @@ const Seat = struct {
                 const keycode = ev.key + 8;
                 const keysym = self.xkb_state.?.keyGetOneSym(keycode);
                 if (keysym == .NoSymbol) return;
-                switch (@enumToInt(keysym)) {
-                    xkb.Keysym.Return => {
-                        self.w.abort(error.UserOk);
-                        return;
-                    },
-                    xkb.Keysym.BackSpace => {
-                        if (self.w.mode == .getpin) {
-                            self.w.config.secbuf.deleteBackwards();
-                            self.w.surface.?.render() catch self.w.abort(error.OutOfMemory);
-                        }
-                        return;
-                    },
-                    xkb.Keysym.Delete => return,
-                    xkb.Keysym.Escape => {
-                        self.w.abort(error.UserAbort);
-                        return;
-                    },
-                    else => {},
+
+                if (self.xkb_state.?.modNameIsActive(
+                    xkb.names.mod.ctrl,
+                    @intToEnum(xkb.State.Component, xkb.State.Component.mods_effective),
+                ) == 1) {
+                    switch (@enumToInt(keysym)) {
+                        xkb.Keysym.BackSpace, xkb.Keysym.w => {
+                            if (self.w.mode == .getpin) {
+                                self.w.config.secbuf.reset(self.w.config.alloc) catch self.w.abort(error.OutOfMemory);
+                                self.w.surface.?.render() catch self.w.abort(error.OutOfMemory);
+                            }
+                        },
+                        else => {},
+                    }
+                } else {
+                    switch (@enumToInt(keysym)) {
+                        xkb.Keysym.Return => {
+                            self.w.abort(error.UserOk);
+                            return;
+                        },
+                        xkb.Keysym.BackSpace => {
+                            if (self.w.mode == .getpin) {
+                                self.w.config.secbuf.deleteBackwards();
+                                self.w.surface.?.render() catch self.w.abort(error.OutOfMemory);
+                            }
+                            return;
+                        },
+                        xkb.Keysym.Delete => return,
+                        xkb.Keysym.Escape => {
+                            self.w.abort(error.UserAbort);
+                            return;
+                        },
+                        else => {},
+                    }
+
+                    if (self.w.mode != .getpin) return;
+
+                    var buffer: [16]u8 = undefined;
+                    const used = self.xkb_state.?.keyGetUtf8(keycode, &buffer);
+                    self.w.config.secbuf.appendSlice(buffer[0..used]) catch {};
+
+                    // We only get keyboard input when a surface exists.
+                    self.w.surface.?.render() catch self.w.abort(error.OutOfMemory);
                 }
-
-                if (self.w.mode != .getpin) return;
-
-                var buffer: [16]u8 = undefined;
-                const used = self.xkb_state.?.keyGetUtf8(keycode, &buffer);
-                self.w.config.secbuf.appendSlice(buffer[0..used]) catch {};
-
-                // We only get keyboard input when a surface exists.
-                self.w.surface.?.render() catch self.w.abort(error.OutOfMemory);
             },
             .enter => {},
             .leave => {},
