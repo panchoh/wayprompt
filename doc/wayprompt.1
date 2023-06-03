@@ -28,7 +28,7 @@ wayprompt \- prompt dialog for Wayland
 .SH DESCRIPTION
 .P
 wayprompt is a prompt dialog tool for Wayland.
-It can display messages, optionally with buttons and querry for secrets.
+It can display messages, optionally with buttons and query for secrets.
 The wayland server must support the \fBwlr-layer-shell-unstable-v1\fR protocol
 extension.
 .
@@ -131,8 +131,7 @@ The first line will be
 .B user-action: <status>
 .
 .P
-where \fB<status>\fR is one of either \fBok\fR, \fBnot-ok\fR, \fBnot-ok\fR
-or \fBcancel\fR.
+where \fB<status>\fR is one of either \fBok\fR, \fBnot-ok\fR or \fBcancel\fR.
 Is \fB\-\-get\-pin\fR used, making wayprompt prompt for a secret, then a second
 line is outputted.
 This is either
