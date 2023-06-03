@@ -620,7 +620,7 @@ const Surface = struct {
 
         log.debug("render.", .{});
 
-        const buffer = (try self.w.buffer_pool.nextBuffer(self.w, self.width, self.height)) orelse return;
+        const buffer = try self.w.buffer_pool.nextBuffer(self.w, self.width, self.height);
         const image = buffer.*.pixman_image.?;
 
         self.drawBackground(image, self.width, self.height);
@@ -827,26 +827,99 @@ const Surface = struct {
 };
 
 const BufferPool = struct {
-    a: Buffer = .{},
-    b: Buffer = .{},
+    /// The amount of buffers per surface we consider the reasonable upper limit.
+    /// Some compositors sometimes tripple-buffer, so three seems to be ok.
+    /// Note that we can absolutely work with higher buffer numbers if needed,
+    /// however we consider that to be an anomaly and therefore do not want to
+    /// keep all those extra buffers around if we can avoid it, as to not have
+    /// unecessary memory overhead.
+    const max_buffer_multiplicity = 3;
 
-    pub fn reset(self: *BufferPool) void {
-        self.a.deinit();
-        self.b.deinit();
-        self.* = .{};
+    /// The buffers. This is a linked list and not an array list, because we
+    /// need stable pointers for the listener of the wl_buffer object.
+    buffers: std.TailQueue(Buffer) = .{},
+
+    /// Deinit the buffer pool, destroying all buffers and freeing all memory.
+    pub fn deinit(self: *BufferPool, alloc: mem.Allocator) void {
+        var it = self.buffers.first;
+        while (it) |node| {
+            // We need to get the next node before destroying the current one.
+            it = node.next;
+            node.data.deinit();
+            alloc.destroy(node);
+        }
     }
 
-    pub fn nextBuffer(self: *BufferPool, w: *Wayland, width: u31, height: u31) !?*Buffer {
-        var buffer: *Buffer = blk: {
-            if (!self.a.busy) break :blk &self.a;
-            if (!self.b.busy) break :blk &self.b;
-            return null;
-        };
-        if (buffer.*.width != width or buffer.*.height != height or buffer.*.wl_buffer == null) {
-            buffer.*.deinit();
-            try buffer.*.init(w, width, height);
+    /// Get a buffer of the specified dimenisons. If possible an idle buffer is
+    /// reused, otherweise a new one is created.
+    pub fn nextBuffer(self: *BufferPool, w: *Wayland, width: u31, height: u31) !*Buffer {
+        log.debug("Next buffer: {}x{}; Total buffers: {}", .{ width, height, self.buffers.len });
+        defer {
+            if (self.buffers.len > max_buffer_multiplicity * self.globalSurfaceCount()) {
+                self.cullBuffers(w);
+            }
         }
-        return buffer;
+        if (try self.findSuitableBuffer(w, width, height)) |buffer| {
+            return buffer;
+        } else {
+            return try self.newBuffer(w, width, height);
+        }
+    }
+
+    fn findSuitableBuffer(self: *BufferPool, w: *Wayland, width: u31, height: u31) !?*Buffer {
+        var it = self.buffers.first;
+        var first_unbusy_buffer_node: ?*std.TailQueue(Buffer).Node = null;
+        while (it) |node| : (it = node.next) {
+            if (node.data.busy) continue;
+            if (node.data.width == width and node.data.height == height) {
+                return &node.data;
+            } else {
+                first_unbusy_buffer_node = node;
+            }
+        }
+
+        // No buffer has matching dimensions, however we do have an unbusy
+        // buffer which we can just re-init.
+        if (first_unbusy_buffer_node) |node| {
+            node.data.deinit();
+            try node.data.init(w, width, height);
+            return &node.data;
+        }
+
+        return null;
+    }
+
+    fn newBuffer(self: *BufferPool, w: *Wayland, width: u31, height: u31) !*Buffer {
+        log.debug("New buffer: {}x{}", .{ width, height });
+        const alloc = w.config.alloc;
+        const node = try alloc.create(std.TailQueue(Buffer).Node);
+        errdefer alloc.destroy(node);
+        try node.data.init(w, width, height);
+        self.buffers.append(node);
+        return &node.data;
+    }
+
+    fn globalSurfaceCount(_: *BufferPool) usize {
+        return 1;
+    }
+
+    fn cullBuffers(self: *BufferPool, w: *Wayland) void {
+        log.debug("Culling buffers.", .{});
+        const alloc = w.config.alloc;
+        var overhead = self.buffers.len - max_buffer_multiplicity * self.globalSurfaceCount();
+        var it = self.buffers.first;
+        while (it) |node| {
+            if (overhead == 0) break;
+            // We need to get the next node before destroying the current one.
+            it = node.next;
+            if (!node.data.busy) {
+                node.data.deinit();
+                self.buffers.remove(node);
+                alloc.destroy(node);
+                overhead -= 1;
+            }
+        }
+        log.debug(" -> new buffer count: {}", .{self.buffers.len});
     }
 };
 
@@ -999,7 +1072,7 @@ pub fn deinit(self: *Wayland) void {
 
     if (self.surface) |*s| s.deinit();
 
-    self.buffer_pool.reset();
+    self.buffer_pool.deinit(self.config.alloc);
     if (self.layer_shell) |ls| ls.destroy();
     if (self.compositor) |cmp| cmp.destroy();
     if (self.shm) |sm| sm.destroy();
