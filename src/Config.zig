@@ -196,10 +196,19 @@ fn fieldEql(field: []const u8, variable: []const u8) bool {
     if (field.len != variable.len) return false;
     if (field.ptr == variable.ptr) return true;
     for (field) |item, index| {
-        if (item == '_') return variable[index] == '-';
-        if (variable[index] != item) return false;
+        if (item == '_') {
+            if (variable[index] != '-') return false;
+        } else if (variable[index] != item) {
+            return false;
+        }
     }
     return true;
+}
+
+test "fieldEql" {
+    const testing = std.testing;
+    try testing.expect(fieldEql("test_test", "test-test"));
+    try testing.expect(!fieldEql("test_testA", "test-testB"));
 }
 
 // Copied and adapted from https://git.sr.ht/~novakane/zelbar, same license.
