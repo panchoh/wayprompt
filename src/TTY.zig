@@ -71,7 +71,7 @@ pub fn enterMode(self: *TTY, mode: Frontend.InterfaceMode) !void {
         try self.term.uncook(.{});
         try self.term.fetchSize();
 
-        if (self.config.title) |t| {
+        if (self.config.labels.title) |t| {
             try self.term.setWindowTitle("wayprompt TTY fallback: {s}", .{t});
         } else {
             try self.term.setWindowTitle("wayprompt TTY fallback", .{});
@@ -93,7 +93,7 @@ pub fn handleEvent(self: *TTY) !Frontend.Event {
             ret = .user_abort;
             break;
         } else if (in.eqlDescription("C-c")) {
-            if (self.config.notok == null) {
+            if (self.config.labels.not_ok == null) {
                 ret = .user_abort;
             } else {
                 ret = .user_notok;
@@ -142,9 +142,10 @@ fn render(self: *TTY) !void {
 
     var line: usize = 0;
 
-    if (self.config.title) |t| try self.renderContent(&rc, t, .{ .bg = .green, .bold = true, .fg = .black }, &line);
-    if (self.config.description) |d| try self.renderContent(&rc, d, .{}, &line);
-    if (self.config.prompt) |p| try self.renderContent(&rc, p, .{ .bold = true }, &line);
+    const labels = self.config.labels;
+    if (labels.title) |t| try self.renderContent(&rc, t, .{ .bg = .green, .bold = true, .fg = .black }, &line);
+    if (labels.description) |d| try self.renderContent(&rc, d, .{}, &line);
+    if (labels.prompt) |p| try self.renderContent(&rc, p, .{ .bold = true }, &line);
 
     if (self.mode == .getpin) {
         try rc.setAttribute(.{ .bold = true });
@@ -152,17 +153,19 @@ fn render(self: *TTY) !void {
         var rpw = rc.restrictedPaddingWriter(self.term.width);
         const writer = rpw.writer();
         try writer.writeAll(" > ");
-        try writer.writeByteNTimes('*', math.min(self.config.pin_square_amount, self.config.secbuf.len));
-        try writer.writeByteNTimes('_', self.config.pin_square_amount -| self.config.secbuf.len);
+        const pin_square_amount = self.config.wayland_ui.pin_square_amount;
+        const len = self.config.secbuf.len;
+        try writer.writeByteNTimes('*', math.min(pin_square_amount, len));
+        try writer.writeByteNTimes('_', pin_square_amount -| len);
         try rpw.finish();
         line += 2;
     }
 
-    if (self.config.errmessage) |e| try self.renderContent(&rc, e, .{ .bold = true, .fg = .red }, &line);
+    if (labels.err_message) |e| try self.renderContent(&rc, e, .{ .bold = true, .fg = .red }, &line);
 
-    if (self.config.ok) |o| try self.renderButton(&rc, "enter", o, &line);
-    if (self.config.notok) |n| try self.renderButton(&rc, "C-c", n, &line);
-    if (self.config.cancel) |c| try self.renderButton(&rc, "escape", c, &line);
+    if (labels.ok) |o| try self.renderButton(&rc, "enter", o, &line);
+    if (labels.not_ok) |n| try self.renderButton(&rc, "C-c", n, &line);
+    if (labels.cancel) |c| try self.renderButton(&rc, "escape", c, &line);
 }
 
 fn renderContent(self: *TTY, rc: *spoon.Term.RenderContext, str: []const u8, attr: spoon.Attribute, line: *usize) !void {

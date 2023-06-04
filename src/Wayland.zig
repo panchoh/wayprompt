@@ -151,7 +151,7 @@ const TextView = struct {
         }
     }
 
-    pub fn draw(self: *const TextView, image: *pixman.Image, colour: *pixman.Color, x: u31, y: u31, c: *Config) !u31 {
+    pub fn draw(self: *const TextView, image: *pixman.Image, colour: *const pixman.Color, x: u31, y: u31, vertical_padding: u31) !u31 {
         const glyphs = switch (self.mode) {
             .text_run => self.mode.text_run.glyphs[0..self.mode.text_run.count],
             .glyphs => self.mode.glyphs.glyphs,
@@ -211,7 +211,7 @@ const TextView = struct {
             X += @intCast(u31, glyphs[i].advance.x);
         }
 
-        return self.height + c.vertical_padding;
+        return self.height + vertical_padding;
     }
 };
 
@@ -537,34 +537,35 @@ const Surface = struct {
     }
 
     fn calculateSize(self: *Surface) !void {
-        self.height = self.w.config.vertical_padding;
-        self.width = self.w.config.horizontal_padding;
+        const uiconf = self.w.config.wayland_ui;
+        self.height = uiconf.vertical_padding;
+        self.width = uiconf.horizontal_padding;
 
         if (self.w.mode == .getpin) {
             if (self.w.prompt) |prompt| {
-                self.width = math.max(prompt.width + 2 * self.w.config.horizontal_padding, self.width);
-                self.height += prompt.height + self.w.config.vertical_padding;
+                self.width = math.max(prompt.width + 2 * uiconf.horizontal_padding, self.width);
+                self.height += prompt.height + uiconf.vertical_padding;
             }
 
-            const square_padding = @divFloor(self.w.config.pin_square_size, 2);
-            const pinarea_height = self.w.config.pin_square_size + 2 * square_padding;
-            const pinarea_width = self.w.config.pin_square_amount * (self.w.config.pin_square_size + square_padding) + square_padding;
+            const square_padding = @divFloor(uiconf.pin_square_size, 2);
+            const pinarea_height = uiconf.pin_square_size + 2 * square_padding;
+            const pinarea_width = uiconf.pin_square_amount * (uiconf.pin_square_size + square_padding) + square_padding;
 
-            self.height += pinarea_height + self.w.config.vertical_padding;
-            self.width = math.max(self.width, pinarea_width + 2 * self.w.config.horizontal_padding);
+            self.height += pinarea_height + uiconf.vertical_padding;
+            self.width = math.max(self.width, pinarea_width + 2 * uiconf.horizontal_padding);
         }
 
         if (self.w.title) |title| {
-            self.width = math.max(title.width + 2 * self.w.config.horizontal_padding, self.width);
-            self.height += title.height + self.w.config.vertical_padding;
+            self.width = math.max(title.width + 2 * uiconf.horizontal_padding, self.width);
+            self.height += title.height + uiconf.vertical_padding;
         }
         if (self.w.description) |description| {
-            self.width = math.max(description.width + 2 * self.w.config.horizontal_padding, self.width);
-            self.height += description.height + self.w.config.vertical_padding;
+            self.width = math.max(description.width + 2 * uiconf.horizontal_padding, self.width);
+            self.height += description.height + uiconf.vertical_padding;
         }
         if (self.w.errmessage) |errmessage| {
-            self.width = math.max(errmessage.width + 2 * self.w.config.horizontal_padding, self.width);
-            self.height += errmessage.height + self.w.config.vertical_padding;
+            self.width = math.max(errmessage.width + 2 * uiconf.horizontal_padding, self.width);
+            self.height += errmessage.height + uiconf.vertical_padding;
         }
 
         {
@@ -574,23 +575,23 @@ const Surface = struct {
 
             if (self.w.ok) |ok| {
                 button_amount += 1;
-                combined_button_length += ok.width + self.w.config.horizontal_padding + 2 * self.w.config.button_inner_padding;
-                max_button_height = math.max(max_button_height, ok.height + 2 * self.w.config.button_inner_padding);
+                combined_button_length += ok.width + uiconf.horizontal_padding + 2 * uiconf.button_inner_padding;
+                max_button_height = math.max(max_button_height, ok.height + 2 * uiconf.button_inner_padding);
             }
             if (self.w.notok) |notok| {
                 button_amount += 1;
-                combined_button_length += notok.width + self.w.config.horizontal_padding + 2 * self.w.config.button_inner_padding;
-                max_button_height = math.max(max_button_height, notok.height + 2 * self.w.config.button_inner_padding);
+                combined_button_length += notok.width + uiconf.horizontal_padding + 2 * uiconf.button_inner_padding;
+                max_button_height = math.max(max_button_height, notok.height + 2 * uiconf.button_inner_padding);
             }
             if (self.w.cancel) |cancel| {
                 button_amount += 1;
-                combined_button_length += cancel.width + self.w.config.horizontal_padding + 2 * self.w.config.button_inner_padding;
-                max_button_height = math.max(max_button_height, cancel.height + 2 * self.w.config.button_inner_padding);
+                combined_button_length += cancel.width + uiconf.horizontal_padding + 2 * uiconf.button_inner_padding;
+                max_button_height = math.max(max_button_height, cancel.height + 2 * uiconf.button_inner_padding);
             }
 
-            self.width = math.max(combined_button_length + self.w.config.horizontal_padding, self.width);
+            self.width = math.max(combined_button_length + uiconf.horizontal_padding, self.width);
 
-            if (max_button_height > 0) self.height += max_button_height + self.w.config.vertical_padding;
+            if (max_button_height > 0) self.height += max_button_height + uiconf.vertical_padding;
 
             debug.assert(self.hotspots.items.len == 0);
             try self.hotspots.ensureTotalCapacity(self.w.config.alloc, max_button_height);
@@ -635,35 +636,37 @@ const Surface = struct {
 
     fn render(self: *Surface) !void {
         if (!self.configured) return;
-
         log.debug("render.", .{});
+
+        const uiconf = self.w.config.wayland_ui;
+        const colours = self.w.config.wayland_colours;
 
         const buffer = try self.w.buffer_pool.nextBuffer(self.w, self.width, self.height);
         const image = buffer.*.pixman_image.?;
 
         self.drawBackground(image, self.width, self.height);
 
-        var Y: u31 = self.w.config.vertical_padding;
+        var Y: u31 = uiconf.vertical_padding;
         if (self.w.title) |title| {
             const X = @divFloor(self.width, 2) -| @divFloor(title.width, 2);
-            Y += try title.draw(image, &self.w.config.text_colour, X, Y, self.w.config);
+            Y += try title.draw(image, &colours.text, X, Y, uiconf.vertical_padding);
         }
         if (self.w.description) |description| {
             const X = @divFloor(self.width, 2) -| @divFloor(description.width, 2);
-            Y += try description.draw(image, &self.w.config.text_colour, X, Y, self.w.config);
+            Y += try description.draw(image, &colours.text, X, Y, uiconf.vertical_padding);
         }
 
         if (self.w.mode == .getpin) {
             if (self.w.prompt) |prompt| {
                 const X = @divFloor(self.width, 2) -| @divFloor(prompt.width, 2);
-                Y += try prompt.draw(image, &self.w.config.text_colour, X, Y, self.w.config);
+                Y += try prompt.draw(image, &colours.text, X, Y, uiconf.vertical_padding);
             }
             Y += self.drawPinArea(image, self.w.config.secbuf.len, Y);
         }
 
         if (self.w.errmessage) |errmessage| {
             const X = @divFloor(self.width, 2) -| @divFloor(errmessage.width, 2);
-            Y += try errmessage.draw(image, &self.w.config.error_text_colour, X, Y, self.w.config);
+            Y += try errmessage.draw(image, &colours.error_text, X, Y, uiconf.vertical_padding);
         }
 
         // The hotspot list is populated on first render. We could technically
@@ -675,20 +678,20 @@ const Surface = struct {
         {
             const combined_button_length = blk: {
                 var len: u31 = 0;
-                if (self.w.ok) |ok| len += ok.width + self.w.config.horizontal_padding + 2 * self.w.config.button_inner_padding;
-                if (self.w.notok) |notok| len += notok.width + self.w.config.horizontal_padding + 2 * self.w.config.button_inner_padding;
-                if (self.w.cancel) |cancel| len += cancel.width + self.w.config.horizontal_padding + 2 * self.w.config.button_inner_padding;
+                if (self.w.ok) |ok| len += ok.width + uiconf.horizontal_padding + 2 * uiconf.button_inner_padding;
+                if (self.w.notok) |notok| len += notok.width + uiconf.horizontal_padding + 2 * uiconf.button_inner_padding;
+                if (self.w.cancel) |cancel| len += cancel.width + uiconf.horizontal_padding + 2 * uiconf.button_inner_padding;
                 break :blk len;
             };
-            var X: u31 = @divFloor(self.width + self.w.config.horizontal_padding, 2) -| @divFloor(combined_button_length, 2);
+            var X: u31 = @divFloor(self.width + uiconf.horizontal_padding, 2) -| @divFloor(combined_button_length, 2);
             if (self.w.cancel) |cancel| {
                 if (populate_hotspots) {
                     self.hotspots.appendAssumeCapacity(.{
                         .effect = .cancel,
                         .x = X,
                         .y = Y,
-                        .width = cancel.width + 2 * self.w.config.button_inner_padding,
-                        .height = cancel.height + 2 * self.w.config.button_inner_padding,
+                        .width = cancel.width + 2 * uiconf.button_inner_padding,
+                        .height = cancel.height + 2 * uiconf.button_inner_padding,
                     });
                 }
 
@@ -696,15 +699,21 @@ const Surface = struct {
                     image,
                     X,
                     Y,
-                    cancel.width + 2 * self.w.config.button_inner_padding,
-                    cancel.height + 2 * self.w.config.button_inner_padding,
-                    self.w.config.button_border,
+                    cancel.width + 2 * uiconf.button_inner_padding,
+                    cancel.height + 2 * uiconf.button_inner_padding,
+                    uiconf.button_border,
                     self.scale,
-                    &self.w.config.cancel_button_background_colour,
-                    &self.w.config.border_colour,
+                    &colours.cancel_button,
+                    &colours.border,
                 );
-                _ = try cancel.draw(image, &self.w.config.text_colour, X + self.w.config.button_inner_padding, Y + self.w.config.button_inner_padding, self.w.config);
-                X += cancel.width + 2 * self.w.config.button_inner_padding + self.w.config.horizontal_padding;
+                _ = try cancel.draw(
+                    image,
+                    &colours.text,
+                    X + uiconf.button_inner_padding,
+                    Y + uiconf.button_inner_padding,
+                    uiconf.vertical_padding,
+                );
+                X += cancel.width + 2 * uiconf.button_inner_padding + uiconf.horizontal_padding;
             }
             if (self.w.notok) |notok| {
                 if (populate_hotspots) {
@@ -712,8 +721,8 @@ const Surface = struct {
                         .effect = .notok,
                         .x = X,
                         .y = Y,
-                        .width = notok.width + 2 * self.w.config.button_inner_padding,
-                        .height = notok.height + 2 * self.w.config.button_inner_padding,
+                        .width = notok.width + 2 * uiconf.button_inner_padding,
+                        .height = notok.height + 2 * uiconf.button_inner_padding,
                     });
                 }
 
@@ -721,15 +730,21 @@ const Surface = struct {
                     image,
                     X,
                     Y,
-                    notok.width + 2 * self.w.config.button_inner_padding,
-                    notok.height + 2 * self.w.config.button_inner_padding,
-                    self.w.config.button_border,
+                    notok.width + 2 * uiconf.button_inner_padding,
+                    notok.height + 2 * uiconf.button_inner_padding,
+                    uiconf.button_border,
                     self.scale,
-                    &self.w.config.notok_button_background_colour,
-                    &self.w.config.border_colour,
+                    &colours.not_ok_button,
+                    &colours.border,
                 );
-                _ = try notok.draw(image, &self.w.config.text_colour, X + self.w.config.button_inner_padding, Y + self.w.config.button_inner_padding, self.w.config);
-                X += notok.width + 2 * self.w.config.button_inner_padding + self.w.config.horizontal_padding;
+                _ = try notok.draw(
+                    image,
+                    &colours.text,
+                    X + uiconf.button_inner_padding,
+                    Y + uiconf.button_inner_padding,
+                    uiconf.vertical_padding,
+                );
+                X += notok.width + 2 * uiconf.button_inner_padding + uiconf.horizontal_padding;
             }
             if (self.w.ok) |ok| {
                 if (populate_hotspots) {
@@ -737,8 +752,8 @@ const Surface = struct {
                         .effect = .ok,
                         .x = X,
                         .y = Y,
-                        .width = ok.width + 2 * self.w.config.button_inner_padding,
-                        .height = ok.height + 2 * self.w.config.button_inner_padding,
+                        .width = ok.width + 2 * uiconf.button_inner_padding,
+                        .height = ok.height + 2 * uiconf.button_inner_padding,
                     });
                 }
 
@@ -746,14 +761,20 @@ const Surface = struct {
                     image,
                     X,
                     Y,
-                    ok.width + 2 * self.w.config.button_inner_padding,
-                    ok.height + 2 * self.w.config.button_inner_padding,
-                    self.w.config.button_border,
+                    ok.width + 2 * uiconf.button_inner_padding,
+                    ok.height + 2 * uiconf.button_inner_padding,
+                    uiconf.button_border,
                     self.scale,
-                    &self.w.config.ok_button_background_colour,
-                    &self.w.config.border_colour,
+                    &colours.ok_button,
+                    &colours.border,
                 );
-                _ = try ok.draw(image, &self.w.config.text_colour, X + self.w.config.button_inner_padding, Y + self.w.config.button_inner_padding, self.w.config);
+                _ = try ok.draw(
+                    image,
+                    &colours.text,
+                    X + uiconf.button_inner_padding,
+                    Y + uiconf.button_inner_padding,
+                    uiconf.vertical_padding,
+                );
             }
         }
 
@@ -765,23 +786,27 @@ const Surface = struct {
     }
 
     fn drawBackground(self: *Surface, image: *pixman.Image, width: u31, height: u31) void {
+        const uiconf = self.w.config.wayland_ui;
+        const colours = self.w.config.wayland_colours;
         borderedRectangle(
             image,
             0,
             0,
             width,
             height,
-            self.w.config.border,
+            uiconf.border,
             self.scale,
-            &self.w.config.background_colour,
-            &self.w.config.border_colour,
+            &colours.background,
+            &colours.border,
         );
     }
 
     fn drawPinArea(self: *Surface, image: *pixman.Image, len: usize, pinarea_y: u31) u31 {
-        const square_padding = @divFloor(self.w.config.pin_square_size, 2);
-        const pinarea_height = self.w.config.pin_square_size + 2 * square_padding;
-        const pinarea_width = self.w.config.pin_square_amount * (self.w.config.pin_square_size + square_padding) + square_padding;
+        const uiconf = self.w.config.wayland_ui;
+        const colours = self.w.config.wayland_colours;
+        const square_padding = @divFloor(uiconf.pin_square_size, 2);
+        const pinarea_height = uiconf.pin_square_size + 2 * square_padding;
+        const pinarea_width = uiconf.pin_square_amount * (uiconf.pin_square_size + square_padding) + square_padding;
         const pinarea_x = @divFloor(self.width, 2) - @divFloor(pinarea_width, 2);
 
         borderedRectangle(
@@ -790,30 +815,30 @@ const Surface = struct {
             pinarea_y,
             pinarea_width,
             pinarea_height,
-            self.w.config.border,
+            uiconf.border,
             self.scale,
-            &self.w.config.pinarea_background_colour,
-            &self.w.config.pinarea_border_colour,
+            &colours.pin_background,
+            &colours.pin_border,
         );
 
         var i: usize = 0;
-        while (i < len and i < self.w.config.pin_square_amount) : (i += 1) {
-            const x = @intCast(u31, pinarea_x + (i * self.w.config.pin_square_size) + ((i + 1) * square_padding));
+        while (i < len and i < uiconf.pin_square_amount) : (i += 1) {
+            const x = @intCast(u31, pinarea_x + (i * uiconf.pin_square_size) + ((i + 1) * square_padding));
             const y = pinarea_y + square_padding;
             borderedRectangle(
                 image,
                 x,
                 y,
-                self.w.config.pin_square_size,
-                self.w.config.pin_square_size,
-                self.w.config.pin_square_border,
+                uiconf.pin_square_size,
+                uiconf.pin_square_size,
+                uiconf.pin_square_border,
                 self.scale,
-                &self.w.config.pinarea_square_colour,
-                &self.w.config.pinarea_border_colour,
+                &colours.pin_square,
+                &colours.pin_border,
             );
         }
 
-        return pinarea_height + self.w.config.vertical_padding;
+        return pinarea_height + uiconf.vertical_padding;
     }
 
     fn borderedRectangle(
@@ -838,8 +863,8 @@ const Surface = struct {
         _ = pixman.Image.fillRectangles(.src, image, border_colour, 4, &[4]pixman.Rectangle16{
             .{ .x = x, .y = y, .width = width, .height = border }, // Top
             .{ .x = x, .y = (y + height - border), .width = width, .height = border }, // Bottom
-            .{ .x = x, .y = (y + border), .width = border, .height = (height - 2 * border) }, // Left
-            .{ .x = (x + width - border), .y = (y + border), .width = border, .height = (height - 2 * border) }, // Right
+            .{ .x = x, .y = (y + border), .width = border, .height = (height -| 2 * border) }, // Left
+            .{ .x = (x + width - border), .y = (y + border), .width = border, .height = (height -| 2 * border) }, // Right
         });
     }
 };
@@ -1140,15 +1165,17 @@ pub fn enterMode(self: *Wayland, mode: Frontend.InterfaceMode) !void {
     }
 }
 
+/// Note: this depends on labels and corresponding TextViews having the same field name.
 fn initTextViews(self: *Wayland) !void {
     const alloc = self.config.alloc;
-    if (self.config.title) |title| self.title = try TextView.new(alloc, mem.trim(u8, title, &ascii.spaces), self.font_large.?);
-    if (self.config.description) |description| self.description = try TextView.new(alloc, mem.trim(u8, description, &ascii.spaces), self.font_regular.?);
-    if (self.config.errmessage) |errmessage| self.errmessage = try TextView.new(alloc, mem.trim(u8, errmessage, &ascii.spaces), self.font_regular.?);
-    if (self.config.prompt) |prompt| self.prompt = try TextView.new(alloc, mem.trim(u8, prompt, &ascii.spaces), self.font_large.?);
-    if (self.config.ok) |ok| self.ok = try TextView.new(alloc, mem.trim(u8, ok, &ascii.spaces), self.font_regular.?);
-    if (self.config.notok) |notok| self.notok = try TextView.new(alloc, mem.trim(u8, notok, &ascii.spaces), self.font_regular.?);
-    if (self.config.cancel) |cancel| self.cancel = try TextView.new(alloc, mem.trim(u8, cancel, &ascii.spaces), self.font_regular.?);
+    const labels = self.config.labels;
+    if (labels.title) |title| self.title = try TextView.new(alloc, mem.trim(u8, title, &ascii.spaces), self.font_large.?);
+    if (labels.description) |description| self.description = try TextView.new(alloc, mem.trim(u8, description, &ascii.spaces), self.font_regular.?);
+    if (labels.err_message) |errmessage| self.errmessage = try TextView.new(alloc, mem.trim(u8, errmessage, &ascii.spaces), self.font_regular.?);
+    if (labels.prompt) |prompt| self.prompt = try TextView.new(alloc, mem.trim(u8, prompt, &ascii.spaces), self.font_large.?);
+    if (labels.ok) |ok| self.ok = try TextView.new(alloc, mem.trim(u8, ok, &ascii.spaces), self.font_regular.?);
+    if (labels.not_ok) |notok| self.notok = try TextView.new(alloc, mem.trim(u8, notok, &ascii.spaces), self.font_regular.?);
+    if (labels.cancel) |cancel| self.cancel = try TextView.new(alloc, mem.trim(u8, cancel, &ascii.spaces), self.font_regular.?);
 }
 
 fn deinitTextViews(self: *Wayland) void {

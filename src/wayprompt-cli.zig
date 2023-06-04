@@ -46,12 +46,15 @@ pub fn main() !u8 {
     };
 
     if (!getpin) {
-        if (config.prompt != null) {
+        if (config.labels.prompt != null) {
             logger.err("you may not set a prompt when not querying for a password.", .{});
             return 1;
         }
 
-        if (config.title == null and config.description == null and config.errmessage == null) {
+        if (config.labels.title == null and
+            config.labels.description == null and
+            config.labels.err_message == null)
+        {
             logger.err("at least one of title, description or error need to be set when not querying for a password.", .{});
             return 1;
         }
@@ -161,21 +164,21 @@ fn parseCmdFlags() !void {
     var it = FlagIt.new(&os.argv);
     while (it.next()) |flag| {
         if (mem.eql(u8, flag, "--title")) {
-            try dupeArg(alloc, &it, &config.title, "--title");
+            try dupeArg(alloc, &it, &config.labels.title, "--title");
         } else if (mem.eql(u8, flag, "--description")) {
-            try dupeArg(alloc, &it, &config.description, "--description");
+            try dupeArg(alloc, &it, &config.labels.description, "--description");
         } else if (mem.eql(u8, flag, "--prompt")) {
-            try dupeArg(alloc, &it, &config.prompt, "--prompt");
+            try dupeArg(alloc, &it, &config.labels.prompt, "--prompt");
         } else if (mem.eql(u8, flag, "--error")) {
-            try dupeArg(alloc, &it, &config.errmessage, "--error");
+            try dupeArg(alloc, &it, &config.labels.err_message, "--error");
         } else if (mem.eql(u8, flag, "--wayland-display")) {
             try dupeArg(alloc, &it, &config.wayland_display, "--wayland-display");
         } else if (mem.eql(u8, flag, "--button-ok")) {
-            try dupeArg(alloc, &it, &config.ok, "--button-ok");
+            try dupeArg(alloc, &it, &config.labels.ok, "--button-ok");
         } else if (mem.eql(u8, flag, "--button-not-ok")) {
-            try dupeArg(alloc, &it, &config.notok, "--button-not-ok");
+            try dupeArg(alloc, &it, &config.labels.not_ok, "--button-not-ok");
         } else if (mem.eql(u8, flag, "--button-cancel")) {
-            try dupeArg(alloc, &it, &config.cancel, "--button-cancel");
+            try dupeArg(alloc, &it, &config.labels.cancel, "--button-cancel");
         } else if (mem.eql(u8, flag, "--get-pin")) {
             getpin = true;
         } else if (mem.eql(u8, flag, "--json")) {

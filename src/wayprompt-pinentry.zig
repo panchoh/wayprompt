@@ -154,10 +154,10 @@ fn handleFrontendEvent(writer: anytype, ev: Frontend.Event) !void {
 
     // The errormessage must automatically reset after every GETPIN or CONFIRM action.
     if (mode == .getpin or mode == .confirm) {
-        if (config.errmessage) |e| {
+        if (config.labels.err_message) |e| {
             const alloc = gpa.allocator();
             alloc.free(e);
-            config.errmessage = null;
+            config.labels.err_message = null;
         }
     }
 
@@ -173,12 +173,12 @@ fn getpin() !void {
     // If we don't have buttons defined, use the default ones. Note: This
     // transfers ownership of the string. This means they will be freed when
     // context is deinit'd.
-    if (config.ok == null and default_ok != null) {
-        config.ok = default_ok.?;
+    if (config.labels.ok == null and default_ok != null) {
+        config.labels.ok = default_ok.?;
         default_ok = null;
     }
-    if (config.cancel == null and default_cancel != null) {
-        config.cancel = default_cancel.?;
+    if (config.labels.cancel == null and default_cancel != null) {
+        config.labels.cancel = default_cancel.?;
         default_cancel = null;
     }
 
@@ -189,7 +189,11 @@ fn getpin() !void {
 fn message(writer: anytype) !void {
     debug.assert(mode == .none);
 
-    if (config.title == null and config.description == null and config.errmessage == null) {
+    const labels = config.labels;
+    if (labels.title == null and
+        labels.description == null and
+        labels.err_message == null)
+    {
         try writer.writeAll("OK\n");
         return;
     }
@@ -204,12 +208,12 @@ fn confirm() !void {
     // If we don't have buttons defined, use the default ones. Note: This
     // transfers ownership of the string. This means they will be freed when
     // context is deinit'd.
-    if (config.ok == null and default_yes != null) {
-        config.ok = default_yes.?;
+    if (config.labels.ok == null and default_yes != null) {
+        config.labels.ok = default_yes.?;
         default_yes = null;
     }
-    if (config.cancel == null and default_no != null) {
-        config.cancel = default_no.?;
+    if (config.labels.cancel == null and default_no != null) {
+        config.labels.cancel = default_no.?;
         default_no = null;
     }
 
@@ -256,11 +260,11 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
     } else if (ascii.eqlIgnoreCase(command, "setdesc")) {
         try setString(writer, "description", line["setdesc".len..]);
     } else if (ascii.eqlIgnoreCase(command, "seterror")) {
-        try setString(writer, "errmessage", line["seterror".len..]);
+        try setString(writer, "err_message", line["seterror".len..]);
     } else if (ascii.eqlIgnoreCase(command, "setok")) {
         try setString(writer, "ok", line["setok ".len..]);
     } else if (ascii.eqlIgnoreCase(command, "setnotok")) {
-        try setString(writer, "notok", line["setnotok ".len..]);
+        try setString(writer, "not_ok", line["setnotok ".len..]);
     } else if (ascii.eqlIgnoreCase(command, "setcancel")) {
         try setString(writer, "cancel", line["setcancel ".len..]);
     } else if (ascii.eqlIgnoreCase(command, "getpin")) {
@@ -410,11 +414,21 @@ fn getOption(comptime opt: []const u8, arg: []const u8, line: []const u8) ?[]con
 
 fn setString(writer: anytype, comptime name: []const u8, value: []const u8) !void {
     const alloc = gpa.allocator();
-    if (@field(config, name)) |f| {
-        @field(config, name) = null;
-        alloc.free(f);
+    if (@hasField(Config, name)) {
+        if (@field(config, name)) |f| {
+            @field(config, name) = null;
+            alloc.free(f);
+        }
+        @field(config, name) = try pinentryDupe(value, false);
+    } else if (@hasField(@TypeOf(config.labels), name)) {
+        if (@field(config.labels, name)) |f| {
+            @field(config.labels, name) = null;
+            alloc.free(f);
+        }
+        @field(config.labels, name) = try pinentryDupe(value, false);
+    } else {
+        @compileError("Field does not exist: " ++ name);
     }
-    @field(config, name) = try pinentryDupe(value, false);
     try writer.writeAll("OK\n");
 }
 
