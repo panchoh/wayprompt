@@ -1,19 +1,3 @@
-// This file is part of nfm, the neat file manager.
-//
-// Copyright © 2021 Leon Henrik Plickat
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License version 3 as published
-// by the Free Software Foundation.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
 const std = @import("std");
 const ascii = std.ascii;
 const io = std.io;
@@ -116,7 +100,7 @@ pub fn tokenize(reader: anytype) IniTok(@TypeOf(reader)) {
 }
 
 test "ini tokenizer good input" {
-    const reader = io.fixedBufferStream(
+    var fbs = io.fixedBufferStream(
         \\[header] # I am a comment
         \\a = b;
         \\
@@ -131,7 +115,8 @@ test "ini tokenizer good input" {
         \\hello = this one; is weird;
         \\hello = test=test;
         \\
-    ).reader();
+    );
+    const reader = fbs.reader();
 
     var it = tokenize(reader);
     var line: usize = 0;
@@ -219,60 +204,66 @@ test "ini tokenizer good input" {
 
 test "ini tokenizer bad input" {
     {
-        const reader = io.fixedBufferStream(
+        var fbs = io.fixedBufferStream(
             \\[section
             \\
-        ).reader();
+        );
+        const reader = fbs.reader();
         var it = tokenize(reader);
         var line: usize = 0;
         try std.testing.expectError(error.InvalidLine, it.next(&line));
         try std.testing.expect(line == 1);
     }
     {
-        const reader = io.fixedBufferStream(
+        var fbs = io.fixedBufferStream(
             \\section]
             \\
-        ).reader();
+        );
+        const reader = fbs.reader();
         var it = tokenize(reader);
         var line: usize = 0;
         try std.testing.expectError(error.InvalidLine, it.next(&line));
         try std.testing.expect(line == 1);
     }
     {
-        const reader = io.fixedBufferStream(
+        var fbs = io.fixedBufferStream(
             \\[]
             \\
-        ).reader();
+        );
+        const reader = fbs.reader();
         var it = tokenize(reader);
         var line: usize = 0;
         try std.testing.expectError(error.InvalidLine, it.next(&line));
         try std.testing.expect(line == 1);
     }
     {
-        const reader = io.fixedBufferStream(
+        var fbs = io.fixedBufferStream(
             \\ =B;
             \\
-        ).reader();
+        );
+        const reader = fbs.reader();
         var it = tokenize(reader);
         var line: usize = 0;
         try std.testing.expectError(error.InvalidLine, it.next(&line));
         try std.testing.expect(line == 1);
     }
     {
-        const reader = io.fixedBufferStream(
+        var fbs = io.fixedBufferStream(
             \\a =
             \\
-        ).reader();
+        );
+        const reader = fbs.reader();
         var it = tokenize(reader);
         var line: usize = 0;
         try std.testing.expectError(error.InvalidLine, it.next(&line));
         try std.testing.expect(line == 1);
     }
     {
-        const reader = io.fixedBufferStream(
+        var fbs = io.fixedBufferStream(
             \\a =  ;
             \\
-        ).reader();
+        );
+        const reader = fbs.reader();
         var it = tokenize(reader);
         var line: usize = 0;
         try std.testing.expectError(error.InvalidLine, it.next(&line));

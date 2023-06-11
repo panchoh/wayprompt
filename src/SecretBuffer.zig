@@ -91,3 +91,31 @@ pub fn slice(self: *Self) ?[]const u8 {
         return null;
     }
 }
+
+test "SecretBuffer" {
+    const testing = std.testing;
+    var buf: Self = undefined;
+    try buf.init(testing.allocator);
+    try testing.expect(buf.slice() == null);
+    try buf.appendSlice("hello");
+    try std.testing.expectEqualSlices(u8, "hello", buf.slice().?);
+    try buf.reset(testing.allocator);
+    try buf.appendSlice("1234");
+    try std.testing.expectEqualSlices(u8, "1234", buf.slice().?);
+    buf.deleteBackwards();
+    try std.testing.expectEqualSlices(u8, "123", buf.slice().?);
+    buf.deleteBackwards();
+    try std.testing.expectEqualSlices(u8, "12", buf.slice().?);
+    buf.deleteBackwards();
+    try std.testing.expectEqualSlices(u8, "1", buf.slice().?);
+    buf.deleteBackwards();
+    try testing.expect(buf.slice() == null);
+    buf.deleteBackwards();
+    buf.deleteBackwards();
+    try buf.appendSlice("abc");
+    try std.testing.expectEqualSlices(u8, "abc", buf.slice().?);
+    try buf.reset(testing.allocator);
+    try buf.appendSlice("a" ** 500);
+    try std.testing.expectError(error.OutOfMemory, buf.appendSlice("a" ** 1000));
+    buf.deinit(testing.allocator);
+}
