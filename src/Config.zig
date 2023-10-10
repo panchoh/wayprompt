@@ -5,6 +5,7 @@ const os = std.os;
 const fmt = std.fmt;
 const meta = std.meta;
 const math = std.math;
+const debug = std.debug;
 const log = std.log.scoped(.config);
 
 const pixman = @import("pixman");
@@ -44,6 +45,7 @@ const WaylandColours = struct {
         const info = @typeInfo(WaylandColours).Struct;
         inline for (info.fields) |field| {
             if (fieldEql(field.name, variable)) {
+                debug.assert(@TypeOf(@field(self, field.name)) == pixman.Color);
                 @field(self, field.name) = pixmanColourFromRGB(value) catch |err| {
                     switch (err) {
                         error.BadColour => log.err("{s}:{}: Bad colour: '{s}'", .{ path, line, value }),
@@ -70,15 +72,40 @@ const WaylandUi = struct {
     border: u31 = 2,
     pin_square_amount: u31 = 16,
 
-    fn assign(self: *WaylandUi, path: []const u8, line: usize, variable: []const u8, value: []const u8) error{BadConfig}!bool {
+    font_regular: ?[:0]u8 = null,
+    font_large: ?[:0]u8 = null,
+
+    fn reset(self: *WaylandUi, alloc: mem.Allocator) void {
+        if (self.font_regular) |p| {
+            alloc.free(p);
+            self.font_regular = null;
+        }
+        if (self.font_large) |p| {
+            alloc.free(p);
+            self.font_large = null;
+        }
+    }
+
+    fn assign(self: *WaylandUi, alloc: mem.Allocator, path: []const u8, line: usize, variable: []const u8, value: []const u8) error{ BadConfig, OutOfMemory }!bool {
         const info = @typeInfo(WaylandUi).Struct;
         inline for (info.fields) |field| {
             if (fieldEql(field.name, variable)) {
-                switch (@typeInfo(field.field_type)) {
-                    .Int => {
+                // TODO[zig]: inline switch
+                switch (@TypeOf(@field(self, field.name))) {
+                    u31 => {
                         @field(self, field.name) = fmt.parseInt(u31, value, 10) catch |err| {
                             log.err("{s}:{}: Invalid positive integer: '{s}', {}", .{ path, line, value, err });
                             return error.BadConfig;
+                        };
+                    },
+                    ?[:0]u8 => {
+                        if (@field(self, field.name)) |p| {
+                            alloc.free(p);
+                            @field(self, field.name) = null;
+                        }
+                        @field(self, field.name) = alloc.dupeZ(u8, value) catch {
+                            log.err("{s}:{}: Parsing value for '{s}': Failed to allocate memory for string: '{s}'", .{ path, line, variable, value });
+                            return error.OutOfMemory;
                         };
                     },
                     else => @compileError("You forgot to write parsing code for this :)"),
@@ -110,6 +137,7 @@ wayland_display: ?[:0]const u8 = null,
 
 /// Frees all memory using provided allocator.
 pub fn reset(self: *Config, alloc: mem.Allocator) void {
+    self.wayland_ui.reset(alloc);
     const info = @typeInfo(@TypeOf(self.labels)).Struct;
     inline for (info.fields) |field| {
         if (@field(self.labels, field.name)) |str| {
@@ -156,7 +184,7 @@ pub fn parse(self: *Config, alloc: mem.Allocator) !void {
                     log.err("{s}:{}: Assignments must be part of a section.", .{ path, line });
                     return error.BadConfig;
                 },
-                .general => try self.assignGeneral(path, line, as.variable, as.value),
+                .general => try self.assignGeneral(alloc, path, line, as.variable, as.value),
                 .colours => try self.assignColour(path, line, as.variable, as.value),
             },
         }
@@ -179,8 +207,8 @@ fn getConfigPath(alloc: mem.Allocator) ![]const u8 {
     }
 }
 
-fn assignGeneral(self: *Config, path: []const u8, line: usize, variable: []const u8, value: []const u8) error{BadConfig}!void {
-    if (try self.wayland_ui.assign(path, line, variable, value)) return;
+fn assignGeneral(self: *Config, alloc: mem.Allocator, path: []const u8, line: usize, variable: []const u8, value: []const u8) error{ BadConfig, OutOfMemory }!void {
+    if (try self.wayland_ui.assign(alloc, path, line, variable, value)) return;
     log.err("Unknown variable in section 'general': '{s}'", .{variable});
     return error.BadConfig;
 }

@@ -60,7 +60,9 @@ pub fn main() !u8 {
         }
     }
 
-    config.parse(alloc) catch return 1;
+    // Using the arena for parsing the config will use extra memory on duplicate
+    // config fields, however it makes cleanup a lot simpler.
+    config.parse(arena.allocator()) catch return 1;
 
     if (getpin) {
         try secret.init(alloc);

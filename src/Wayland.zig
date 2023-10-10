@@ -1094,10 +1094,22 @@ pub fn init(self: *Wayland, cfg: *Config) !os.fd_t {
     self.xkb_context = xkb.Context.new(.no_flags) orelse return error.OutOfMemory;
 
     _ = fcft.init(.never, false, .none);
-    var font_regular_names = [_][*:0]const u8{ "sans:size=14", "mono:size=14" };
-    self.font_regular = try fcft.Font.fromName(font_regular_names[0..], null);
-    var font_large_names = [_][*:0]const u8{ "sans:size=20", "mono:size=20" };
-    self.font_large = try fcft.Font.fromName(font_large_names[0..], null);
+
+    if (self.config.wayland_ui.font_regular) |user_font| {
+        var fonts = [_][*:0]const u8{ user_font, "sans:size=14", "mono:size=14" };
+        self.font_regular = try fcft.Font.fromName(fonts[0..], null);
+    } else {
+        var fonts = [_][*:0]const u8{ "sans:size=14", "mono:size=14" };
+        self.font_regular = try fcft.Font.fromName(fonts[0..], null);
+    }
+
+    if (self.config.wayland_ui.font_large) |user_font| {
+        var fonts = [_][*:0]const u8{ user_font, "sans:size=20", "mono:size=20" };
+        self.font_large = try fcft.Font.fromName(fonts[0..], null);
+    } else {
+        var fonts = [_][*:0]const u8{ "sans:size=20", "mono:size=20" };
+        self.font_large = try fcft.Font.fromName(fonts[0..], null);
+    }
 
     return self.display.getFd();
 }
