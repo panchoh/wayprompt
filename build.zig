@@ -1,18 +1,16 @@
 const std = @import("std");
-const zbs = std.build;
+const fs = std.fs;
 const mem = std.mem;
-const ascii = std.ascii;
-const fmt = std.fmt;
 
-const ScanProtocolsStep = @import("deps/zig-wayland/build.zig").ScanProtocolsStep;
+const Scanner = @import("deps/zig-wayland/build.zig").Scanner;
 
-pub fn build(b: *zbs.Builder) !void {
-    const mode = b.standardReleaseOptions();
-    const options = b.addOptions();
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+    const options = b.addOptions();
 
-    const scanner = ScanProtocolsStep.create(b);
-    scanner.addProtocolPath("protocol/wlr-layer-shell-unstable-v1.xml");
+    const scanner = Scanner.create(b, .{});
+    scanner.addCustomProtocol("protocol/wlr-layer-shell-unstable-v1.xml");
     scanner.addSystemProtocol("stable/xdg-shell/xdg-shell.xml");
     scanner.generate("wl_compositor", 5);
     scanner.generate("wl_shm", 1);
@@ -21,61 +19,75 @@ pub fn build(b: *zbs.Builder) !void {
     scanner.generate("wl_seat", 8);
     scanner.generate("wl_output", 4);
 
-    const wayprompt_cli = b.addExecutable("wayprompt", "src/wayprompt-cli.zig");
-    wayprompt_cli.setTarget(target);
-    wayprompt_cli.setBuildMode(mode);
+    const wayland = b.createModule(.{ .source_file = scanner.result });
+    const xkbcommon = b.createModule(.{
+        .source_file = .{ .path = "deps/zig-xkbcommon/src/xkbcommon.zig" },
+    });
+    const pixman = b.createModule(.{
+        .source_file = .{ .path = "deps/zig-pixman/pixman.zig" },
+    });
+    const spoon = b.createModule(.{
+        .source_file = .{ .path = "deps/zig-spoon/import.zig" },
+    });
+    const fcft = b.createModule(.{
+        .source_file = .{ .path = "deps/zig-fcft/fcft.zig" },
+        .dependencies = &.{
+            .{ .name = "pixman", .module = pixman },
+        },
+    });
+
+    const wayprompt_cli = b.addExecutable(.{
+        .name = "wayprompt",
+        .root_source_file = .{ .path = "src/wayprompt-cli.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
+    wayprompt_cli.linkLibC();
+    wayprompt_cli.addModule("wayland", wayland);
+    wayprompt_cli.linkSystemLibrary("wayland-client");
+    wayprompt_cli.linkSystemLibrary("wayland-cursor");
+    scanner.addCSource(wayprompt_cli);
+    wayprompt_cli.addModule("fcft", fcft);
+    wayprompt_cli.linkSystemLibrary("fcft");
+    wayprompt_cli.addModule("xkbcommon", xkbcommon);
+    wayprompt_cli.linkSystemLibrary("xkbcommon");
+    wayprompt_cli.addModule("pixman", pixman);
+    wayprompt_cli.linkSystemLibrary("pixman-1");
+    wayprompt_cli.addModule("spoon", spoon);
     wayprompt_cli.addOptions("build_options", options);
-    try exeSetup(scanner, wayprompt_cli);
+    b.installArtifact(wayprompt_cli);
 
-    const wayprompt_pinentry = b.addExecutable("pinentry-wayprompt", "src/wayprompt-pinentry.zig");
-    wayprompt_pinentry.setTarget(target);
-    wayprompt_pinentry.setBuildMode(mode);
+    const wayprompt_pinentry = b.addExecutable(.{
+        .name = "river",
+        .root_source_file = .{ .path = "src/wayprompt-pinentry.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
+    wayprompt_pinentry.linkLibC();
+    wayprompt_pinentry.addModule("wayland", wayland);
+    wayprompt_pinentry.linkSystemLibrary("wayland-client");
+    wayprompt_pinentry.linkSystemLibrary("wayland-cursor");
+    scanner.addCSource(wayprompt_pinentry);
+    wayprompt_pinentry.addModule("fcft", fcft);
+    wayprompt_pinentry.linkSystemLibrary("fcft");
+    wayprompt_pinentry.addModule("xkbcommon", xkbcommon);
+    wayprompt_pinentry.linkSystemLibrary("xkbcommon");
+    wayprompt_pinentry.addModule("pixman", pixman);
+    wayprompt_pinentry.linkSystemLibrary("pixman-1");
+    wayprompt_pinentry.addModule("spoon", spoon);
     wayprompt_pinentry.addOptions("build_options", options);
-    try exeSetup(scanner, wayprompt_pinentry);
+    b.installArtifact(wayprompt_pinentry);
 
-    const tests = b.addTest("src/tests.zig");
-    tests.setTarget(target);
-    tests.setBuildMode(mode);
-    tests.linkLibC();
-    const test_step = b.step("test", "Run all tests");
-    test_step.dependOn(&tests.step);
+    const tests = b.addTest(.{
+        .root_source_file = .{ .path = "src/tests.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_test = b.addRunArtifact(tests);
+    const test_step = b.step("test", "Run tests");
+    test_step.dependOn(&run_test.step);
 
     b.installFile("doc/wayprompt.1", "share/man/man1/wayprompt.1");
     b.installFile("doc/pinentry-wayprompt.1", "share/man/man1/pinentry-wayprompt.1");
     b.installFile("doc/wayprompt.5", "share/man/man5/wayprompt.5");
-}
-
-fn exeSetup(scanner: *ScanProtocolsStep, exe: *zbs.LibExeObjStep) !void {
-    exe.addPackagePath("spoon", "deps/zig-spoon/import.zig");
-
-    const pixman = std.build.Pkg{
-        .name = "pixman",
-        .source = .{ .path = "deps/zig-pixman/pixman.zig" },
-    };
-    exe.addPackage(pixman);
-    exe.linkSystemLibrary("pixman-1");
-
-    const fcft = std.build.Pkg{
-        .name = "fcft",
-        .source = .{ .path = "deps/zig-fcft/fcft.zig" },
-        .dependencies = &[_]std.build.Pkg{pixman},
-    };
-    exe.addPackage(fcft);
-    exe.linkSystemLibrary("fcft");
-
-    exe.addPackagePath("xkbcommon", "deps/zig-xkbcommon/src/xkbcommon.zig");
-    exe.linkSystemLibrary("xkbcommon");
-
-    exe.step.dependOn(&scanner.step);
-    exe.addPackage(.{
-        .name = "wayland",
-        .source = .{ .generated = &scanner.result },
-    });
-    exe.linkLibC();
-    exe.linkSystemLibrary("wayland-client");
-    exe.linkSystemLibrary("wayland-cursor");
-
-    scanner.addCSource(exe);
-
-    exe.install();
 }

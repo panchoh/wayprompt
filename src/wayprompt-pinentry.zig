@@ -251,7 +251,7 @@ fn parseInput(writer: io.BufferedWriter(4096, fs.File.Writer).Writer, line: []co
     if (mode != .none) return;
 
     const alloc = gpa.allocator();
-    var it = mem.tokenize(u8, line, &ascii.spaces);
+    var it = mem.tokenize(u8, line, &ascii.whitespace);
     const command = it.next() orelse return;
     if (ascii.eqlIgnoreCase(command, "settitle")) {
         try setString(writer, "title", line["settitle".len..]);

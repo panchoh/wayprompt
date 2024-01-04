@@ -90,7 +90,6 @@ const WaylandUi = struct {
         const info = @typeInfo(WaylandUi).Struct;
         inline for (info.fields) |field| {
             if (fieldEql(field.name, variable)) {
-                // TODO[zig]: inline switch
                 switch (@TypeOf(@field(self, field.name))) {
                     u31 => {
                         @field(self, field.name) = fmt.parseInt(u31, value, 10) catch |err| {
@@ -219,14 +218,13 @@ fn assignColour(self: *Config, path: []const u8, line: usize, variable: []const 
     return error.BadConfig;
 }
 
-// TODO[zig]: multi for loop
 fn fieldEql(field: []const u8, variable: []const u8) bool {
     if (field.len != variable.len) return false;
     if (field.ptr == variable.ptr) return true;
-    for (field) |item, index| {
-        if (item == '_') {
-            if (variable[index] != '-') return false;
-        } else if (variable[index] != item) {
+    for (field, variable) |f, v| {
+        if (f == '_') {
+            if (v != '-') return false;
+        } else if (v != f) {
             return false;
         }
     }
@@ -250,7 +248,7 @@ fn pixmanColourFromRGB(descr: []const u8) !pixman.Color {
         color |= 0xff;
     }
 
-    const bytes = @bitCast([4]u8, color);
+    const bytes = @as([4]u8, @bitCast(color));
 
     const r: u16 = bytes[3];
     const g: u16 = bytes[2];

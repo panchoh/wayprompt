@@ -2,7 +2,6 @@ const builtin = @import("builtin");
 const std = @import("std");
 const ascii = std.ascii;
 const os = std.os;
-const cstr = std.cstr;
 const mem = std.mem;
 const math = std.math;
 const unicode = std.unicode;
@@ -61,7 +60,7 @@ const TextView = struct {
     pub fn new(alloc: mem.Allocator, str: []const u8, font: *fcft.Font) !TextView {
         if (str.len == 0) return error.EmptyString;
 
-        var height = @intCast(u31, font.height);
+        var height: u31 = @intCast(font.height);
 
         const len = try unicode.utf8CountCodepoints(str);
         const codepoints = try alloc.alloc(u32, len);
@@ -70,7 +69,7 @@ const TextView = struct {
             var i: usize = 0;
             var it = (try unicode.Utf8View.init(str)).iterator();
             while (it.nextCodepoint()) |cp| : (i += 1) {
-                if (cp == '\n') height += @intCast(u31, font.height);
+                if (cp == '\n') height += @as(u31, @intCast(font.height));
                 codepoints[i] = cp;
             }
         }
@@ -87,7 +86,7 @@ const TextView = struct {
                     }
                     width = 0;
                 } else {
-                    width += @intCast(u31, text_run.glyphs[i].advance.x);
+                    width += @as(u31, @intCast(text_run.glyphs[i].advance.x));
                 }
             }
             if (width > max_width) {
@@ -122,7 +121,7 @@ const TextView = struct {
                     }
                     width = 0;
                 } else {
-                    width += @intCast(u31, kerns[i] + glyphs[i].advance.x);
+                    width += @as(u31, @intCast(kerns[i] + glyphs[i].advance.x));
                 }
             }
             if (width > max_width) {
@@ -161,11 +160,11 @@ const TextView = struct {
         var Y: u31 = y;
         var i: usize = 0;
         while (i < glyphs.len) : (i += 1) {
-            if (self.mode == .glyphs) X += @intCast(u31, self.mode.glyphs.kerns[i]);
+            if (self.mode == .glyphs) X += @as(u31, @intCast(self.mode.glyphs.kerns[i]));
 
             if (glyphs[i].cp == '\n') {
                 X = x;
-                Y += @intCast(u31, self.font.height);
+                Y += @as(u31, @intCast(self.font.height));
                 continue;
             }
 
@@ -183,8 +182,8 @@ const TextView = struct {
                     0,
                     0,
                     0,
-                    X + @intCast(u31, glyphs[i].x),
-                    Y - @intCast(i32, glyphs[i].y) + self.font.ascent,
+                    X + @as(u31, @intCast(glyphs[i].x)),
+                    Y - @as(i32, @intCast(glyphs[i].y)) + self.font.ascent,
                     glyphs[i].width,
                     glyphs[i].height,
                 ),
@@ -200,15 +199,15 @@ const TextView = struct {
                         0,
                         0,
                         0,
-                        X + @intCast(i32, glyphs[i].x),
-                        Y - @intCast(i32, glyphs[i].y) + self.font.ascent,
+                        X + @as(i32, @intCast(glyphs[i].x)),
+                        Y - @as(i32, @intCast(glyphs[i].y)) + self.font.ascent,
                         glyphs[i].width,
                         glyphs[i].height,
                     );
                 },
             }
 
-            X += @intCast(u31, glyphs[i].advance.x);
+            X += @as(u31, @intCast(glyphs[i].advance.x));
         }
 
         return self.height + vertical_padding;
@@ -321,10 +320,10 @@ const Seat = struct {
 
     fn updatePointer(self: *Seat, x: wl.Fixed, y: wl.Fixed, serial: ?u32) void {
         const X = x.toInt();
-        self.pointer_x = if (X > 0) @intCast(u31, X) else 0;
+        self.pointer_x = if (X > 0) @as(u31, @intCast(X)) else 0;
 
         const Y = y.toInt();
-        self.pointer_y = if (Y > 0) @intCast(u31, Y) else 0;
+        self.pointer_y = if (Y > 0) @as(u31, @intCast(Y)) else 0;
 
         if (serial) |s| self.last_enter_serial = s;
 
@@ -382,8 +381,8 @@ const Seat = struct {
         self.wl_pointer.?.setCursor(
             self.last_enter_serial,
             self.cursor_surface.?,
-            @intCast(i32, @divFloor(cursor_image.hotspot_x, scale)),
-            @intCast(i32, @divFloor(cursor_image.hotspot_y, scale)),
+            @intCast(@divFloor(cursor_image.hotspot_x, scale)),
+            @intCast(@divFloor(cursor_image.hotspot_y, scale)),
         );
     }
 
@@ -451,9 +450,9 @@ const Seat = struct {
 
                 if (self.xkb_state.?.modNameIsActive(
                     xkb.names.mod.ctrl,
-                    @intToEnum(xkb.State.Component, xkb.State.Component.mods_effective),
+                    @as(xkb.State.Component, @enumFromInt(xkb.State.Component.mods_effective)),
                 ) == 1) {
-                    switch (@enumToInt(keysym)) {
+                    switch (@intFromEnum(keysym)) {
                         xkb.Keysym.BackSpace, xkb.Keysym.w => {
                             if (self.w.mode == .getpin) {
                                 self.w.config.secbuf.reset(self.w.config.alloc) catch self.w.abort(error.OutOfMemory);
@@ -463,7 +462,7 @@ const Seat = struct {
                         else => {},
                     }
                 } else {
-                    switch (@enumToInt(keysym)) {
+                    switch (@intFromEnum(keysym)) {
                         xkb.Keysym.Return => {
                             self.w.abort(error.UserOk);
                             return;
@@ -543,7 +542,7 @@ const Surface = struct {
 
         if (self.w.mode == .getpin) {
             if (self.w.prompt) |prompt| {
-                self.width = math.max(prompt.width + 2 * uiconf.horizontal_padding, self.width);
+                self.width = @max(prompt.width + 2 * uiconf.horizontal_padding, self.width);
                 self.height += prompt.height + uiconf.vertical_padding;
             }
 
@@ -552,19 +551,19 @@ const Surface = struct {
             const pinarea_width = uiconf.pin_square_amount * (uiconf.pin_square_size + square_padding) + square_padding;
 
             self.height += pinarea_height + uiconf.vertical_padding;
-            self.width = math.max(self.width, pinarea_width + 2 * uiconf.horizontal_padding);
+            self.width = @max(self.width, pinarea_width + 2 * uiconf.horizontal_padding);
         }
 
         if (self.w.title) |title| {
-            self.width = math.max(title.width + 2 * uiconf.horizontal_padding, self.width);
+            self.width = @max(title.width + 2 * uiconf.horizontal_padding, self.width);
             self.height += title.height + uiconf.vertical_padding;
         }
         if (self.w.description) |description| {
-            self.width = math.max(description.width + 2 * uiconf.horizontal_padding, self.width);
+            self.width = @max(description.width + 2 * uiconf.horizontal_padding, self.width);
             self.height += description.height + uiconf.vertical_padding;
         }
         if (self.w.errmessage) |errmessage| {
-            self.width = math.max(errmessage.width + 2 * uiconf.horizontal_padding, self.width);
+            self.width = @max(errmessage.width + 2 * uiconf.horizontal_padding, self.width);
             self.height += errmessage.height + uiconf.vertical_padding;
         }
 
@@ -576,20 +575,20 @@ const Surface = struct {
             if (self.w.ok) |ok| {
                 button_amount += 1;
                 combined_button_length += ok.width + uiconf.horizontal_padding + 2 * uiconf.button_inner_padding;
-                max_button_height = math.max(max_button_height, ok.height + 2 * uiconf.button_inner_padding);
+                max_button_height = @max(max_button_height, ok.height + 2 * uiconf.button_inner_padding);
             }
             if (self.w.notok) |notok| {
                 button_amount += 1;
                 combined_button_length += notok.width + uiconf.horizontal_padding + 2 * uiconf.button_inner_padding;
-                max_button_height = math.max(max_button_height, notok.height + 2 * uiconf.button_inner_padding);
+                max_button_height = @max(max_button_height, notok.height + 2 * uiconf.button_inner_padding);
             }
             if (self.w.cancel) |cancel| {
                 button_amount += 1;
                 combined_button_length += cancel.width + uiconf.horizontal_padding + 2 * uiconf.button_inner_padding;
-                max_button_height = math.max(max_button_height, cancel.height + 2 * uiconf.button_inner_padding);
+                max_button_height = @max(max_button_height, cancel.height + 2 * uiconf.button_inner_padding);
             }
 
-            self.width = math.max(combined_button_length + uiconf.horizontal_padding, self.width);
+            self.width = @max(combined_button_length + uiconf.horizontal_padding, self.width);
 
             if (max_button_height > 0) self.height += max_button_height + uiconf.vertical_padding;
 
@@ -823,7 +822,7 @@ const Surface = struct {
 
         var i: usize = 0;
         while (i < len and i < uiconf.pin_square_amount) : (i += 1) {
-            const x = @intCast(u31, pinarea_x + (i * uiconf.pin_square_size) + ((i + 1) * square_padding));
+            const x: u31 = @intCast(pinarea_x + (i * uiconf.pin_square_size) + ((i + 1) * square_padding));
             const y = pinarea_y + square_padding;
             borderedRectangle(
                 image,
@@ -852,11 +851,11 @@ const Surface = struct {
         background_colour: *const pixman.Color,
         border_colour: *const pixman.Color,
     ) void {
-        const x = @intCast(i16, _x * scale);
-        const y = @intCast(i16, _y * scale);
-        const width = @intCast(u15, _width * scale);
-        const height = @intCast(u15, _height * scale);
-        const border = @intCast(u15, _border * scale);
+        const x: i16 = @intCast(_x * scale);
+        const y: i16 = @intCast(_y * scale);
+        const width: u15 = @intCast(_width * scale);
+        const height: u15 = @intCast(_height * scale);
+        const border: u15 = @intCast(_border * scale);
         _ = pixman.Image.fillRectangles(.src, image, background_colour, 1, &[1]pixman.Rectangle16{
             .{ .x = x, .y = y, .width = width, .height = height },
         });
@@ -1009,10 +1008,10 @@ const Buffer = struct {
 
         const pixman_image = pixman.Image.createBitsNoClear(
             .a8r8g8b8,
-            @intCast(c_int, width),
-            @intCast(c_int, height),
-            @ptrCast([*c]u32, data),
-            @intCast(c_int, stride),
+            @as(c_int, @intCast(width)),
+            @as(c_int, @intCast(height)),
+            @as([*c]u32, @ptrCast(data)),
+            @as(c_int, @intCast(stride)),
         );
         errdefer _ = pixman_image.unref();
 
@@ -1082,7 +1081,7 @@ pub fn init(self: *Wayland, cfg: *Config) !os.fd_t {
     };
     log.debug("trying to connect to '{s}'.", .{wayland_display});
 
-    self.display = try wl.Display.connect(@ptrCast([*:0]const u8, wayland_display.ptr));
+    self.display = try wl.Display.connect(@as([*:0]const u8, @ptrCast(wayland_display.ptr)));
     errdefer self.deinit();
 
     self.registry = try self.display.getRegistry();
@@ -1181,13 +1180,13 @@ pub fn enterMode(self: *Wayland, mode: Frontend.InterfaceMode) !void {
 fn initTextViews(self: *Wayland) !void {
     const alloc = self.config.alloc;
     const labels = self.config.labels;
-    if (labels.title) |title| self.title = try TextView.new(alloc, mem.trim(u8, title, &ascii.spaces), self.font_large.?);
-    if (labels.description) |description| self.description = try TextView.new(alloc, mem.trim(u8, description, &ascii.spaces), self.font_regular.?);
-    if (labels.err_message) |errmessage| self.errmessage = try TextView.new(alloc, mem.trim(u8, errmessage, &ascii.spaces), self.font_regular.?);
-    if (labels.prompt) |prompt| self.prompt = try TextView.new(alloc, mem.trim(u8, prompt, &ascii.spaces), self.font_large.?);
-    if (labels.ok) |ok| self.ok = try TextView.new(alloc, mem.trim(u8, ok, &ascii.spaces), self.font_regular.?);
-    if (labels.not_ok) |notok| self.notok = try TextView.new(alloc, mem.trim(u8, notok, &ascii.spaces), self.font_regular.?);
-    if (labels.cancel) |cancel| self.cancel = try TextView.new(alloc, mem.trim(u8, cancel, &ascii.spaces), self.font_regular.?);
+    if (labels.title) |title| self.title = try TextView.new(alloc, mem.trim(u8, title, &ascii.whitespace), self.font_large.?);
+    if (labels.description) |description| self.description = try TextView.new(alloc, mem.trim(u8, description, &ascii.whitespace), self.font_regular.?);
+    if (labels.err_message) |errmessage| self.errmessage = try TextView.new(alloc, mem.trim(u8, errmessage, &ascii.whitespace), self.font_regular.?);
+    if (labels.prompt) |prompt| self.prompt = try TextView.new(alloc, mem.trim(u8, prompt, &ascii.whitespace), self.font_large.?);
+    if (labels.ok) |ok| self.ok = try TextView.new(alloc, mem.trim(u8, ok, &ascii.whitespace), self.font_regular.?);
+    if (labels.not_ok) |notok| self.notok = try TextView.new(alloc, mem.trim(u8, notok, &ascii.whitespace), self.font_regular.?);
+    if (labels.cancel) |cancel| self.cancel = try TextView.new(alloc, mem.trim(u8, cancel, &ascii.whitespace), self.font_regular.?);
 }
 
 fn deinitTextViews(self: *Wayland) void {
@@ -1313,22 +1312,22 @@ fn abort(self: *Wayland, reason: anyerror) void {
 fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, self: *Wayland) void {
     switch (event) {
         .global => |ev| {
-            if (cstr.cmp(ev.interface, zwlr.LayerShellV1.getInterface().name) == 0) {
+            if (mem.orderZ(u8, ev.interface, zwlr.LayerShellV1.getInterface().name) == .eq) {
                 self.layer_shell = registry.bind(ev.name, zwlr.LayerShellV1, 4) catch {
                     self.abort(error.OutOfMemory);
                     return;
                 };
-            } else if (cstr.cmp(ev.interface, wl.Compositor.getInterface().name) == 0) {
+            } else if (mem.orderZ(u8, ev.interface, wl.Compositor.getInterface().name) == .eq) {
                 self.compositor = registry.bind(ev.name, wl.Compositor, 4) catch {
                     self.abort(error.OutOfMemory);
                     return;
                 };
-            } else if (cstr.cmp(ev.interface, wl.Shm.getInterface().name) == 0) {
+            } else if (mem.orderZ(u8, ev.interface, wl.Shm.getInterface().name) == .eq) {
                 self.shm = registry.bind(ev.name, wl.Shm, 1) catch {
                     self.abort(error.OutOfMemory);
                     return;
                 };
-            } else if (cstr.cmp(ev.interface, wl.Seat.getInterface().name) == 0) {
+            } else if (mem.orderZ(u8, ev.interface, wl.Seat.getInterface().name) == .eq) {
                 const seat = registry.bind(ev.name, wl.Seat, 1) catch {
                     self.abort(error.OutOfMemory);
                     return;

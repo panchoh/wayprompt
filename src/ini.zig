@@ -33,12 +33,12 @@ fn IniTok(comptime T: type) type {
                     if (__buf.len == 0) continue;
 
                     const buf = blk: {
-                        const _buf = mem.trim(u8, __buf, &ascii.spaces);
+                        const _buf = mem.trim(u8, __buf, &ascii.whitespace);
                         if (_buf.len == 0) continue;
                         if (_buf[0] == '#') continue;
-                        for (_buf[1..]) |char, i| {
+                        for (_buf[1..], 0..) |char, i| {
                             if (char == '#' and _buf[i - 1] != '\\') {
-                                break :blk mem.trim(u8, _buf[0 .. i + 1], &ascii.spaces);
+                                break :blk mem.trim(u8, _buf[0 .. i + 1], &ascii.whitespace);
                             }
                         }
                         break :blk _buf;
@@ -53,7 +53,7 @@ fn IniTok(comptime T: type) type {
 
                     // Is this line an assignment?
                     var eq_pos = blk: {
-                        for (buf) |char, i| {
+                        for (buf, 0..) |char, i| {
                             if (char == '=') {
                                 if (i == buf.len - 1) return error.InvalidLine;
                                 break :blk i;
@@ -64,15 +64,14 @@ fn IniTok(comptime T: type) type {
                     return Content{
                         .assign = .{
                             .variable = blk: {
-                                const variable = mem.trim(u8, buf[0..eq_pos], &ascii.spaces);
+                                const variable = mem.trim(u8, buf[0..eq_pos], &ascii.whitespace);
                                 if (variable.len == 0) return error.InvalidLine;
                                 break :blk variable;
                             },
                             .value = blk: {
-                                const value = mem.trim(u8, buf[eq_pos + 1 ..], &ascii.spaces);
+                                const value = mem.trim(u8, buf[eq_pos + 1 ..], &ascii.whitespace);
                                 if (value.len < 2 or value[value.len - 1] != ';') return error.InvalidLine;
-                                // TODO[zig] should be inline, but that crashes the zig compiler right now
-                                for ([_]u8{ '\'', '"' }) |q| {
+                                inline for ([_]u8{ '\'', '"' }) |q| {
                                     if (value[0] == q) {
                                         if (value[value.len - 2] == q and value.len > 3) {
                                             break :blk value[1 .. value.len - 2];

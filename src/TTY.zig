@@ -155,7 +155,7 @@ fn render(self: *TTY) !void {
         try writer.writeAll(" > ");
         const pin_square_amount = self.config.wayland_ui.pin_square_amount;
         const len = self.config.secbuf.len;
-        try writer.writeByteNTimes('*', math.min(pin_square_amount, len));
+        try writer.writeByteNTimes('*', @min(pin_square_amount, len));
         try writer.writeByteNTimes('_', pin_square_amount -| len);
         try rpw.finish();
         line += 2;
