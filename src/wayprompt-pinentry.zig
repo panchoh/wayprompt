@@ -106,6 +106,10 @@ pub fn main() !u8 {
             // by just not including it in the slice.
             try parseInput(out_buffer.writer(), in_buffer[0 .. read - 1]);
         }
+        if (fds[fds_stdin].revents & os.POLL.HUP != 0) {
+            logger.debug("pipe closed.", .{});
+            break;
+        }
 
         if (fds[fds_frontend].revents & os.POLL.IN != 0) {
             if (frontend.handleEvent()) |ev| {
