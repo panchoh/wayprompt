@@ -70,6 +70,7 @@ const WaylandUi = struct {
     pin_square_border: u31 = 1,
     button_border: u31 = 1,
     border: u31 = 2,
+    corner_radius: u15 = 10,
     pin_square_amount: u31 = 16,
 
     font_regular: ?[:0]u8 = null,
@@ -91,8 +92,8 @@ const WaylandUi = struct {
         inline for (info.fields) |field| {
             if (fieldEql(field.name, variable)) {
                 switch (@TypeOf(@field(self, field.name))) {
-                    u31 => {
-                        @field(self, field.name) = fmt.parseInt(u31, value, 10) catch |err| {
+                    u31, u15 => {
+                        @field(self, field.name) = fmt.parseInt(@TypeOf(@field(self, field.name)), value, 10) catch |err| {
                             log.err("{s}:{}: Invalid positive integer: '{s}', {}", .{ path, line, value, err });
                             return error.BadConfig;
                         };

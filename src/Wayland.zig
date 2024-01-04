@@ -510,6 +510,14 @@ const Surface = struct {
 
     scale: u31 = 1, // TODO use buffer_scale events
 
+    circle: struct {
+        outline: ?*pixman.Image = null,
+        background: ?*pixman.Image = null,
+
+        outline_data: ?[]u8 = null,
+        background_data: ?[]u8 = null,
+    } = .{},
+
     /// Cursor / Touch hotspots, populated on first render.
     hotspots: std.ArrayListUnmanaged(HotSpot) = .{},
 
@@ -528,6 +536,101 @@ const Surface = struct {
             .layer_surface = layer_surface,
         };
         try self.calculateSize();
+
+        const uiconf = w.config.wayland_ui;
+        if (uiconf.corner_radius > 0) {
+            const corner_radius = @min(
+                uiconf.corner_radius,
+                @divFloor(self.width, 2),
+                @divFloor(self.height, 2),
+            );
+            const size = corner_radius * 2;
+            debug.assert(self.circle.outline == null);
+            debug.assert(self.circle.outline_data == null);
+            debug.assert(self.circle.background == null);
+            debug.assert(self.circle.background_data == null);
+
+            const transparent = pixman.Color{ .red = 0, .green = 0, .blue = 0, .alpha = 0 };
+
+            // I am way to lazy to port this insane C macro to zig code,
+            // especially since the format is hardcoded.
+            const pixman_format_bpp_of_a8 = 8;
+            const stride: u31 = pixman_format_bpp_of_a8 * size;
+
+            const alloc = self.w.config.alloc;
+            self.circle.outline_data = try alloc.alloc(u8, size * stride);
+            errdefer {
+                alloc.free(self.circle.outline_data.?);
+                self.circle.outline_data = null;
+            }
+            self.circle.outline = pixman.Image.createBits(
+                .a8,
+                @intCast(size),
+                @intCast(size),
+                @as([*c]u32, @alignCast(@ptrCast(self.circle.outline_data.?.ptr))),
+                @intCast(stride),
+            );
+            errdefer _ = self.circle.outline.?.unref();
+            _ = pixman.Image.fillRectangles(
+                .src,
+                self.circle.outline.?,
+                &transparent,
+                1,
+                &[1]pixman.Rectangle16{
+                    .{ .x = 0, .y = 0, .width = size, .height = size },
+                },
+            );
+
+            self.circle.background_data = try alloc.alloc(u8, size * stride);
+            errdefer {
+                alloc.free(self.circle.background_data.?);
+                self.circle.background_data = null;
+            }
+            self.circle.background = pixman.Image.createBits(
+                .a8,
+                @intCast(size),
+                @intCast(size),
+                @as([*c]u32, @alignCast(@ptrCast(self.circle.background_data.?.ptr))),
+                @intCast(stride),
+            );
+            errdefer _ = self.circle.background.?.unref();
+            _ = pixman.Image.fillRectangles(
+                .src,
+                self.circle.background.?,
+                &transparent,
+                1,
+                &[1]pixman.Rectangle16{
+                    .{ .x = 0, .y = 0, .width = size, .height = size },
+                },
+            );
+
+            // TODO maybe draw a "squircle"?
+            const center = @as(f32, @floatFromInt(size)) / 2.0;
+            for (0..size) |x| {
+                const diff_x: f32 = center - (@as(f32, @floatFromInt(x)) + 0.5);
+                for (0..size) |y| {
+                    const diff_y: f32 = center - (@as(f32, @floatFromInt(y)) + 0.5);
+                    const distance_to_center = @sqrt(
+                        (diff_x * diff_x) + (diff_y * diff_y),
+                    );
+
+                    const R: f32 = @floatFromInt(corner_radius);
+                    const b: f32 = @floatFromInt(uiconf.border);
+
+                    // Fake anti-aliasing.
+                    if (distance_to_center < R + 0.5 and distance_to_center > R - (b + 0.3)) {
+                        self.circle.outline_data.?[y * stride + x] = 0x44;
+                    }
+
+                    if (distance_to_center < R) {
+                        if (distance_to_center > R - b) {
+                            self.circle.outline_data.?[y * stride + x] = 0xff;
+                        }
+                        self.circle.background_data.?[y * stride + x] = 0xff;
+                    }
+                }
+            }
+        }
 
         layer_surface.setListener(*Surface, layerSurfaceListener, self);
         layer_surface.setKeyboardInteractivity(.exclusive);
@@ -601,6 +704,23 @@ const Surface = struct {
         self.hotspots.deinit(self.w.config.alloc);
         self.layer_surface.destroy();
         self.wl_surface.destroy();
+
+        if (self.circle.outline) |o| {
+            _ = o.unref();
+            self.circle.outline = null;
+        }
+        if (self.circle.background) |b| {
+            _ = b.unref();
+            self.circle.background = null;
+        }
+        if (self.circle.outline_data) |o| {
+            self.w.config.alloc.free(o);
+            self.circle.outline_data = null;
+        }
+        if (self.circle.background_data) |b| {
+            self.w.config.alloc.free(b);
+            self.circle.background_data = null;
+        }
     }
 
     pub fn hotspotFromPoint(self: *Surface, x: u31, y: u31) ?*HotSpot {
@@ -798,6 +918,140 @@ const Surface = struct {
             &colours.background,
             &colours.border,
         );
+
+        if (uiconf.corner_radius > 0) {
+            const corner_radius = @min(
+                uiconf.corner_radius,
+                @divFloor(self.width, 2),
+                @divFloor(self.height, 2),
+            );
+            const colour_source_background = pixman.Image.createSolidFill(&colours.background);
+            defer {
+                if (colour_source_background) |b| _ = b.unref();
+            }
+            const colour_source_border = pixman.Image.createSolidFill(&colours.border);
+            defer {
+                if (colour_source_border) |b| _ = b.unref();
+            }
+
+            if (colour_source_background != null) {
+                pixman.Image.composite32(
+                    .src,
+                    colour_source_background.?,
+                    self.circle.background.?,
+                    image,
+                    0, // Source coords.
+                    0,
+                    0, // Mask coords.
+                    0,
+                    0, // Destination coords.
+                    0,
+                    corner_radius, // Source dimensions.
+                    corner_radius,
+                );
+                pixman.Image.composite32(
+                    .src,
+                    colour_source_background.?,
+                    self.circle.background.?,
+                    image,
+                    0, // Source coords.
+                    0,
+                    corner_radius, // Mask coords.
+                    0,
+                    width - corner_radius, // Destination coords.
+                    0,
+                    corner_radius, // Source dimensions.
+                    corner_radius,
+                );
+                pixman.Image.composite32(
+                    .src,
+                    colour_source_background.?,
+                    self.circle.background.?,
+                    image,
+                    0, // Source coords.
+                    0,
+                    0, // Mask coords.
+                    corner_radius,
+                    0, // Destination coords.
+                    height - corner_radius,
+                    corner_radius, // Source dimensions.
+                    corner_radius,
+                );
+                pixman.Image.composite32(
+                    .src,
+                    colour_source_background.?,
+                    self.circle.background.?,
+                    image,
+                    0, // Source coords.
+                    0,
+                    corner_radius, // Mask coords.
+                    corner_radius,
+                    width - corner_radius, // Destination coords.
+                    height - corner_radius,
+                    corner_radius, // Source dimensions.
+                    corner_radius,
+                );
+            }
+
+            if (colour_source_border != null) {
+                pixman.Image.composite32(
+                    .over,
+                    colour_source_border.?,
+                    self.circle.outline.?,
+                    image,
+                    0, // Source coords.
+                    0,
+                    0, // Mask coords.
+                    0,
+                    0, // Destination coords.
+                    0,
+                    corner_radius, // Source dimensions.
+                    corner_radius,
+                );
+                pixman.Image.composite32(
+                    .over,
+                    colour_source_border.?,
+                    self.circle.outline.?,
+                    image,
+                    0, // Source coords.
+                    0,
+                    corner_radius, // Mask coords.
+                    0,
+                    width - corner_radius, // Destination coords.
+                    0,
+                    corner_radius, // Source dimensions.
+                    corner_radius,
+                );
+                pixman.Image.composite32(
+                    .over,
+                    colour_source_border.?,
+                    self.circle.outline.?,
+                    image,
+                    0, // Source coords.
+                    0,
+                    0, // Mask coords.
+                    corner_radius,
+                    0, // Destination coords.
+                    height - corner_radius,
+                    corner_radius, // Source dimensions.
+                    corner_radius,
+                );
+                pixman.Image.composite32(
+                    .over,
+                    colour_source_border.?,
+                    self.circle.outline.?,
+                    image,
+                    0, // Source coords.
+                    0,
+                    corner_radius, // Mask coords.
+                    corner_radius,
+                    width - corner_radius, // Destination coords.
+                    height - corner_radius,
+                    corner_radius, // Source dimensions.
+                    corner_radius,
+                );
+            }
+        }
     }
 
     fn drawPinArea(self: *Surface, image: *pixman.Image, len: usize, pinarea_y: u31) u31 {

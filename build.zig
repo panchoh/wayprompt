@@ -58,7 +58,7 @@ pub fn build(b: *std.Build) !void {
     b.installArtifact(wayprompt_cli);
 
     const wayprompt_pinentry = b.addExecutable(.{
-        .name = "river",
+        .name = "pinentry-wayprompt",
         .root_source_file = .{ .path = "src/wayprompt-pinentry.zig" },
         .target = target,
         .optimize = optimize,
