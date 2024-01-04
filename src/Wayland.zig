@@ -52,6 +52,7 @@ const TextView = struct {
             kerns: []c_long,
         },
     };
+
     mode: Mode,
     font: *fcft.Font,
     width: u31,
@@ -174,7 +175,7 @@ const TextView = struct {
             switch (pixman.Image.getFormat(glyphs[i].pix)) {
                 // Pre-rendered Image.
                 .a8r8g8b8 => pixman.Image.composite32(
-                    .over,
+                    .atop,
                     glyphs[i].pix,
                     null,
                     image,
@@ -191,7 +192,7 @@ const TextView = struct {
                 // Alpha mask (i.e. regular character).
                 else => {
                     pixman.Image.composite32(
-                        .over,
+                        .atop,
                         solcol,
                         glyphs[i].pix,
                         image,

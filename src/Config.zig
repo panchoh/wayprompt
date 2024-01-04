@@ -238,28 +238,31 @@ test "fieldEql" {
     try testing.expect(!fieldEql("test_testA", "test-testB"));
 }
 
-// Copied and adapted from https://git.sr.ht/~novakane/zelbar, same license.
-fn pixmanColourFromRGB(descr: []const u8) !pixman.Color {
-    if (descr.len != "0xRRGGBB".len) return error.BadColour;
-    if (descr[0] != '0' or descr[1] != 'x') return error.BadColour;
+fn pixmanColourFromRGB(hex: []const u8) !pixman.Color {
+    if (hex.len != "0xRRGGBB".len and hex.len != "0xRRGGBBAA".len) return error.BadColour;
+    if (hex[0] != '0' or hex[1] != 'x') return error.BadColour;
 
-    var color = try fmt.parseUnsigned(u32, descr[2..], 16);
-    if (descr.len == 8) {
-        color <<= 8;
-        color |= 0xff;
+    var colour = try fmt.parseUnsigned(u32, hex[2..], 16);
+    if (hex.len == 8) {
+        colour <<= 8;
+        colour |= 0xff;
     }
 
-    const bytes = @as([4]u8, @bitCast(color));
+    const bytes = @as([4]u8, @bitCast(colour));
 
     const r: u16 = bytes[3];
     const g: u16 = bytes[2];
     const b: u16 = bytes[1];
     const a: u16 = bytes[0];
 
-    return pixman.Color{
-        .red = @as(u16, r << math.log2(0x101)) + r,
-        .green = @as(u16, g << math.log2(0x101)) + g,
-        .blue = @as(u16, b << math.log2(0x101)) + b,
-        .alpha = @as(u16, a << math.log2(0x101)) + a,
-    };
+    // Note: premultiplied alpha.
+    const alpha = @as(u16, @intFromFloat((@as(f32, @floatFromInt(a)) / 255.0) * 65535.0));
+    const red = @as(u16, @intFromFloat(((@as(f32, @floatFromInt(r)) / 255.0) * 65535.0) *
+        @as(f32, @floatFromInt(alpha)) / 0xffff));
+    const green = @as(u16, @intFromFloat(((@as(f32, @floatFromInt(g)) / 255.0) * 65535.0) *
+        @as(f32, @floatFromInt(alpha)) / 0xffff));
+    const blue = @as(u16, @intFromFloat(((@as(f32, @floatFromInt(b)) / 255.0) * 65535.0) *
+        @as(f32, @floatFromInt(alpha)) / 0xffff));
+
+    return pixman.Color{ .red = red, .green = green, .blue = blue, .alpha = alpha };
 }
