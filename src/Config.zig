@@ -30,16 +30,16 @@ const Labels = struct {
 /// Colours used for Wayland frontend.
 /// Populated by configuration file.
 const WaylandColours = struct {
-    background: pixman.Color = pixmanColourFromRGB("0xffffff") catch @compileError("Bad colour!"),
-    border: pixman.Color = pixmanColourFromRGB("0x000000") catch @compileError("Bad colour!"),
-    text: pixman.Color = pixmanColourFromRGB("0x000000") catch @compileError("Bad colour!"),
-    error_text: pixman.Color = pixmanColourFromRGB("0xe0002b") catch @compileError("Bad colour!"),
-    pin_background: pixman.Color = pixmanColourFromRGB("0xd0d0d0") catch @compileError("Bad colour!"),
-    pin_border: pixman.Color = pixmanColourFromRGB("0x000000") catch @compileError("Bad colour!"),
-    pin_square: pixman.Color = pixmanColourFromRGB("0x808080") catch @compileError("Bad colour!"),
-    ok_button: pixman.Color = pixmanColourFromRGB("0xd5f200") catch @compileError("Bad colour!"),
-    not_ok_button: pixman.Color = pixmanColourFromRGB("0xffe53e") catch @compileError("Bad colour!"),
-    cancel_button: pixman.Color = pixmanColourFromRGB("0xff4647") catch @compileError("Bad colour!"),
+    background: pixman.Color = comptimePixmanColourFromRGB("0xffffff"),
+    border: pixman.Color = comptimePixmanColourFromRGB("0x000000"),
+    text: pixman.Color = comptimePixmanColourFromRGB("0x000000"),
+    error_text: pixman.Color = comptimePixmanColourFromRGB("0xe0002b"),
+    pin_background: pixman.Color = comptimePixmanColourFromRGB("0xd0d0d0"),
+    pin_border: pixman.Color = comptimePixmanColourFromRGB("0x000000"),
+    pin_square: pixman.Color = comptimePixmanColourFromRGB("0x808080"),
+    ok_button: pixman.Color = comptimePixmanColourFromRGB("0xd5f200"),
+    not_ok_button: pixman.Color = comptimePixmanColourFromRGB("0xffe53e"),
+    cancel_button: pixman.Color = comptimePixmanColourFromRGB("0xff4647"),
 
     fn assign(self: *WaylandColours, path: []const u8, line: usize, variable: []const u8, value: []const u8) error{BadConfig}!bool {
         const info = @typeInfo(WaylandColours).Struct;
@@ -236,6 +236,10 @@ test "fieldEql" {
     const testing = std.testing;
     try testing.expect(fieldEql("test_test", "test-test"));
     try testing.expect(!fieldEql("test_testA", "test-testB"));
+}
+
+fn comptimePixmanColourFromRGB(hex: []const u8) pixman.Color {
+    return pixmanColourFromRGB(hex) catch @compileError("Bad colour!");
 }
 
 fn pixmanColourFromRGB(hex: []const u8) !pixman.Color {
