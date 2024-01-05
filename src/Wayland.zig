@@ -824,11 +824,11 @@ const Surface = struct {
                     uiconf.button_border,
                     self.scale,
                     &colours.cancel_button,
-                    &colours.border,
+                    &colours.cancel_button_border,
                 );
                 _ = try cancel.draw(
                     image,
-                    &colours.text,
+                    &colours.cancel_button_text,
                     X + uiconf.button_inner_padding,
                     Y + uiconf.button_inner_padding,
                     uiconf.vertical_padding,
@@ -855,11 +855,11 @@ const Surface = struct {
                     uiconf.button_border,
                     self.scale,
                     &colours.not_ok_button,
-                    &colours.border,
+                    &colours.not_ok_button_border,
                 );
                 _ = try notok.draw(
                     image,
-                    &colours.text,
+                    &colours.not_ok_button_text,
                     X + uiconf.button_inner_padding,
                     Y + uiconf.button_inner_padding,
                     uiconf.vertical_padding,
@@ -886,11 +886,11 @@ const Surface = struct {
                     uiconf.button_border,
                     self.scale,
                     &colours.ok_button,
-                    &colours.border,
+                    &colours.ok_button_border,
                 );
                 _ = try ok.draw(
                     image,
-                    &colours.text,
+                    &colours.ok_button_text,
                     X + uiconf.button_inner_padding,
                     Y + uiconf.button_inner_padding,
                     uiconf.vertical_padding,

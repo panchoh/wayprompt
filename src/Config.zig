@@ -32,14 +32,25 @@ const Labels = struct {
 const WaylandColours = struct {
     background: pixman.Color = comptimePixmanColourFromRGB("0xffffff"),
     border: pixman.Color = comptimePixmanColourFromRGB("0x000000"),
+
     text: pixman.Color = comptimePixmanColourFromRGB("0x000000"),
     error_text: pixman.Color = comptimePixmanColourFromRGB("0xe0002b"),
+
     pin_background: pixman.Color = comptimePixmanColourFromRGB("0xd0d0d0"),
     pin_border: pixman.Color = comptimePixmanColourFromRGB("0x000000"),
     pin_square: pixman.Color = comptimePixmanColourFromRGB("0x808080"),
+
     ok_button: pixman.Color = comptimePixmanColourFromRGB("0xd5f200"),
+    ok_button_border: pixman.Color = comptimePixmanColourFromRGB("0x000000"),
+    ok_button_text: pixman.Color = comptimePixmanColourFromRGB("0x000000"),
+
     not_ok_button: pixman.Color = comptimePixmanColourFromRGB("0xffe53e"),
+    not_ok_button_border: pixman.Color = comptimePixmanColourFromRGB("0x000000"),
+    not_ok_button_text: pixman.Color = comptimePixmanColourFromRGB("0x000000"),
+
     cancel_button: pixman.Color = comptimePixmanColourFromRGB("0xff4647"),
+    cancel_button_border: pixman.Color = comptimePixmanColourFromRGB("0x000000"),
+    cancel_button_text: pixman.Color = comptimePixmanColourFromRGB("0x000000"),
 
     fn assign(self: *WaylandColours, path: []const u8, line: usize, variable: []const u8, value: []const u8) error{BadConfig}!bool {
         const info = @typeInfo(WaylandColours).Struct;
