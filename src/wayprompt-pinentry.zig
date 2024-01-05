@@ -64,11 +64,13 @@ pub fn main() !u8 {
     const fds_stdin = 0;
     const fds_frontend = 1;
     var fds: [2]os.pollfd = undefined;
+
     fds[fds_stdin] = .{
         .fd = stdin.handle,
         .events = os.POLL.IN,
         .revents = undefined,
     };
+    var stdin_closed: bool = false;
 
     fds[fds_frontend] = .{
         .fd = try frontend.init(&config),
@@ -97,19 +99,32 @@ pub fn main() !u8 {
             try writer.writeAll("ERR 83886179 Operation cancelled\n");
         }
 
-        _ = try os.poll(&fds, -1);
+        // We don't poll stdin if it has been closed to avoid pointless spinning.
+        _ = try os.poll(if (stdin_closed) fds[1..2] else &fds, -1);
 
-        if (fds[fds_stdin].revents & os.POLL.IN != 0) {
-            const read = try stdin.read(&in_buffer);
-            if (read == 0) break;
-            // Behold: We also read '\n', so let's get rid of that here handily
-            // by just not including it in the slice.
-            try parseInput(out_buffer.writer(), in_buffer[0 .. read - 1]);
-        }
-        if (fds[fds_stdin].revents & os.POLL.HUP != 0) {
+        if (!stdin_closed) {
+            if (fds[fds_stdin].revents & os.POLL.IN != 0) {
+                const read = try stdin.read(&in_buffer);
+                if (read == 0) break;
+
+                // The read call may have returned multiple lines at once here, normal command-line
+                // buffering does not apply here.
+                // TODO: handle partial lines returned by read calls
+                var split_iter = std.mem.splitScalar(u8, in_buffer[0..read], '\n');
+                while (split_iter.next()) |line| {
+                    // The line may be empty in the case of a trailing newline in the read input
+                    if (line.len == 0) continue;
+                    try parseInput(out_buffer.writer(), line);
+                }
+            }
+
             logger.debug("pipe closed.", .{});
-            break;
+            if (fds[fds_stdin].revents & os.POLL.HUP != 0) {
+                stdin_closed = true;
+            }
         }
+
+        if (stdin_closed and mode == .none) break;
 
         if (fds[fds_frontend].revents & os.POLL.IN != 0) {
             if (frontend.handleEvent()) |ev| {
