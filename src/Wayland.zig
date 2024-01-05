@@ -13,6 +13,7 @@ const fcft = @import("fcft");
 const xkb = @import("xkbcommon");
 const wayland = @import("wayland");
 const wl = wayland.client.wl;
+const wp = wayland.client.wp;
 const zwlr = wayland.client.zwlr;
 
 const Frontend = @import("Frontend.zig");
@@ -216,8 +217,6 @@ const TextView = struct {
 };
 
 const Seat = struct {
-    const CursorShape = enum { none, arrow, hand };
-
     w: *Wayland,
 
     wl_seat: *wl.Seat,
@@ -228,9 +227,10 @@ const Seat = struct {
 
     // Pointer related objects.
     wl_pointer: ?*wl.Pointer = null,
+    cursor_shape_device: ?*wp.CursorShapeDeviceV1 = null,
     pointer_x: u31 = 0,
     pointer_y: u31 = 0,
-    cursor_shape: CursorShape = .none,
+    cursor_shape: ?wp.CursorShapeDeviceV1.Shape = null,
     cursor_theme: ?*wl.CursorTheme = null,
     cursor_surface: ?*wl.Surface = null,
     last_enter_serial: u32 = undefined,
@@ -270,12 +270,16 @@ const Seat = struct {
 
     fn bindPointer(self: *Seat) !void {
         if (self.wl_pointer != null) return;
+        debug.assert(self.cursor_shape == null);
         self.wl_pointer = try self.wl_seat.getPointer();
         self.wl_pointer.?.setListener(*Seat, pointerListener, self);
+        if (self.w.cursor_shape_manager) |csm| {
+            self.cursor_shape_device = try csm.getPointer(self.wl_pointer.?);
+        }
     }
 
     fn releasePointer(self: *Seat) void {
-        self.cursor_shape = .none;
+        self.cursor_shape = null;
         self.press_hotspot = null;
         if (self.cursor_theme) |t| {
             t.destroy();
@@ -289,6 +293,10 @@ const Seat = struct {
             p.release();
             self.wl_pointer = null;
         }
+        if (self.cursor_shape_device) |csd| {
+            csd.destroy();
+            self.cursor_shape_device = null;
+        }
     }
 
     fn pointerListener(_: *wl.Pointer, event: wl.Pointer.Event, self: *Seat) void {
@@ -298,6 +306,7 @@ const Seat = struct {
 
         switch (event) {
             .enter => |ev| self.updatePointer(ev.surface_x, ev.surface_y, ev.serial),
+            .leave => self.cursor_shape = null,
             .motion => |ev| self.updatePointer(ev.surface_x, ev.surface_y, null),
             .button => |ev| {
                 // Only activating a button on release is the better UX, IMO.
@@ -335,20 +344,31 @@ const Seat = struct {
         // something to go wrong there and it's not exactly vital to our
         // operation here, so we can roll without setting the cursor.
         if (self.w.surface.?.hotspotFromPoint(self.pointer_x, self.pointer_y) != null) {
-            self.setCursor(.hand) catch {};
+            self.setCursor(.pointer) catch {};
         } else {
-            self.setCursor(.arrow) catch {};
+            self.setCursor(.default) catch {};
         }
     }
 
-    fn setCursor(self: *Seat, shape: CursorShape) !void {
-        if (self.cursor_shape == shape) return;
+    fn setCursor(self: *Seat, shape: wp.CursorShapeDeviceV1.Shape) !void {
+        if (self.cursor_shape) |cs| {
+            if (cs == shape) return;
+        }
+        self.cursor_shape = shape;
 
-        const name = switch (shape) {
-            .none => unreachable,
-            .arrow => "default",
-            .hand => "pointer",
-        };
+        log.debug("Setting cursor: {s}", .{@tagName(shape)});
+
+        // If the Wayland server supports the CursorShapeV1 protocol, use that
+        // to set the cursor. Otherwise we need to go through wl-cursor.
+        if (self.cursor_shape_device) |csd| {
+            csd.setShape(self.last_enter_serial, shape);
+        } else {
+            try self.setCursorSurface(shape);
+        }
+    }
+
+    fn setCursorSurface(self: *Seat, shape: wp.CursorShapeDeviceV1.Shape) !void {
+        const name = @tagName(shape);
 
         const scale = 1; // TODO
         const cursor_size = 24 * scale;
@@ -1308,6 +1328,7 @@ font_regular: ?*fcft.Font = null,
 display: *wl.Display = undefined,
 registry: ?*wl.Registry = null,
 layer_shell: ?*zwlr.LayerShellV1 = null,
+cursor_shape_manager: ?*wp.CursorShapeManagerV1 = null,
 compositor: ?*wl.Compositor = null,
 shm: ?*wl.Shm = null,
 seats: std.TailQueue(Seat) = .{},
@@ -1383,6 +1404,7 @@ pub fn deinit(self: *Wayland) void {
 
     self.buffer_pool.deinit(self.config.alloc);
     if (self.layer_shell) |ls| ls.destroy();
+    if (self.cursor_shape_manager) |csm| csm.destroy();
     if (self.compositor) |cmp| cmp.destroy();
     if (self.shm) |sm| sm.destroy();
 
@@ -1569,6 +1591,11 @@ fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, self: *Way
         .global => |ev| {
             if (mem.orderZ(u8, ev.interface, zwlr.LayerShellV1.getInterface().name) == .eq) {
                 self.layer_shell = registry.bind(ev.name, zwlr.LayerShellV1, 4) catch {
+                    self.abort(error.OutOfMemory);
+                    return;
+                };
+            } else if (mem.orderZ(u8, ev.interface, wp.CursorShapeManagerV1.getInterface().name) == .eq) {
+                self.cursor_shape_manager = registry.bind(ev.name, wp.CursorShapeManagerV1, 1) catch {
                     self.abort(error.OutOfMemory);
                     return;
                 };

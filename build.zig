@@ -11,11 +11,13 @@ pub fn build(b: *std.Build) !void {
 
     const scanner = Scanner.create(b, .{});
     scanner.addCustomProtocol("protocol/wlr-layer-shell-unstable-v1.xml");
-    scanner.addSystemProtocol("stable/xdg-shell/xdg-shell.xml");
+    scanner.addSystemProtocol("stable/xdg-shell/xdg-shell.xml"); // Dependency of layer-shell.
+    scanner.addSystemProtocol("staging/cursor-shape/cursor-shape-v1.xml");
+    scanner.addSystemProtocol("unstable/tablet/tablet-unstable-v2.xml"); // Dependency of cursor-shape.
+    scanner.generate("wp_cursor_shape_manager_v1", 1);
     scanner.generate("wl_compositor", 5);
     scanner.generate("wl_shm", 1);
     scanner.generate("zwlr_layer_shell_v1", 3);
-    scanner.generate("xdg_wm_base", 5); // Needed as a dependency of the layershell.
     scanner.generate("wl_seat", 8);
     scanner.generate("wl_output", 4);
 
