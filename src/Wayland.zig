@@ -731,7 +731,7 @@ const Surface = struct {
             if (max_button_height > 0) self.height += max_button_height + uiconf.vertical_padding;
 
             debug.assert(self.hotspots.items.len == 0);
-            try self.hotspots.ensureTotalCapacity(self.w.config.alloc, max_button_height);
+            try self.hotspots.ensureTotalCapacity(self.w.config.alloc, button_amount);
         }
     }
 
