@@ -9,7 +9,10 @@ const fmt = std.fmt;
 const heap = std.heap;
 const debug = std.debug;
 
-pub const log = @import("log.zig").log;
+pub const std_options = struct {
+    pub const logFn = @import("log.zig").log;
+};
+
 const logger = std.log.scoped(.wayprompt);
 var use_syslog = &@import("log.zig").use_syslog;
 

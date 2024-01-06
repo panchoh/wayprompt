@@ -6,7 +6,10 @@ const debug = std.debug;
 const io = std.io;
 const meta = std.meta;
 
-pub const log = @import("log.zig").log;
+pub const std_options = struct {
+    pub const logFn = @import("log.zig").log;
+};
+
 const logger = std.log.scoped(.wayprompt);
 
 const Frontend = @import("Frontend.zig");

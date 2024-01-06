@@ -39,5 +39,5 @@ fn syslog(
     };
     var buf: [1024]u8 = undefined;
     const str = try fmt.bufPrintZ(&buf, format, args);
-    c.syslog(priority, str.ptr);
+    c.syslog(priority, "%s", str.ptr);
 }
