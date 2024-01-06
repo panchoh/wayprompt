@@ -8,6 +8,7 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const options = b.addOptions();
+    const pie = b.option(bool, "pie", "Build with PIE support (by default false)") orelse false;
 
     const scanner = Scanner.create(b, .{});
     scanner.addCustomProtocol("protocol/wlr-layer-shell-unstable-v1.xml");
@@ -57,6 +58,7 @@ pub fn build(b: *std.Build) !void {
     wayprompt_cli.linkSystemLibrary("pixman-1");
     wayprompt_cli.addModule("spoon", spoon);
     wayprompt_cli.addOptions("build_options", options);
+    wayprompt_cli.pie = pie;
     b.installArtifact(wayprompt_cli);
 
     const wayprompt_pinentry = b.addExecutable(.{
@@ -78,6 +80,7 @@ pub fn build(b: *std.Build) !void {
     wayprompt_pinentry.linkSystemLibrary("pixman-1");
     wayprompt_pinentry.addModule("spoon", spoon);
     wayprompt_pinentry.addOptions("build_options", options);
+    wayprompt_pinentry.pie = pie;
     b.installArtifact(wayprompt_pinentry);
 
     const tests = b.addTest(.{
