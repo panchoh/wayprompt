@@ -520,6 +520,111 @@ const Seat = struct {
     }
 };
 
+/// Pixman images of circle and circle outline, used as masks to draw rounded corners.
+const CircleMask = struct {
+    outline: ?*pixman.Image = null,
+    background: ?*pixman.Image = null,
+
+    outline_data: ?[]u8 = null,
+    background_data: ?[]u8 = null,
+
+    pub fn init(self: *CircleMask, alloc: mem.Allocator, radius: u15, border: u31) !void {
+        debug.assert(self.outline == null);
+        debug.assert(self.outline_data == null);
+        debug.assert(self.background == null);
+        debug.assert(self.background_data == null);
+
+        const size = radius * 2;
+
+        // I am way to lazy to port this insane C macro to zig code,
+        // especially since the format is hardcoded.
+        const pixman_format_bpp_of_a8 = 8;
+        const stride: u31 = pixman_format_bpp_of_a8 * size;
+
+        self.outline_data = try alloc.alloc(u8, size * stride);
+        errdefer {
+            alloc.free(self.outline_data.?);
+            self.outline_data = null;
+        }
+        self.outline = pixman.Image.createBits(
+            .a8,
+            @intCast(size),
+            @intCast(size),
+            @as([*c]u32, @alignCast(@ptrCast(self.outline_data.?.ptr))),
+            @intCast(stride),
+        );
+        errdefer _ = self.outline.?.unref();
+
+        self.background_data = try alloc.alloc(u8, size * stride);
+        errdefer {
+            alloc.free(self.background_data.?);
+            self.background_data = null;
+        }
+        self.background = pixman.Image.createBits(
+            .a8,
+            @intCast(size),
+            @intCast(size),
+            @as([*c]u32, @alignCast(@ptrCast(self.background_data.?.ptr))),
+            @intCast(stride),
+        );
+        errdefer _ = self.background.?.unref();
+
+        // Clear.
+        // TODO XXX is this needed?
+        const transparent = pixman.Color{ .red = 0, .green = 0, .blue = 0, .alpha = 0 };
+        _ = pixman.Image.fillRectangles(.src, self.outline.?, &transparent, 1, &[1]pixman.Rectangle16{
+            .{ .x = 0, .y = 0, .width = size, .height = size },
+        });
+        _ = pixman.Image.fillRectangles(.src, self.background.?, &transparent, 1, &[1]pixman.Rectangle16{
+            .{ .x = 0, .y = 0, .width = size, .height = size },
+        });
+
+        const R: f32 = @floatFromInt(radius);
+        const b: f32 = @floatFromInt(border);
+        const center = @as(f32, @floatFromInt(size)) / 2.0;
+        for (0..size) |x| {
+            const diff_x: f32 = center - (@as(f32, @floatFromInt(x)) + 0.5);
+            for (0..size) |y| {
+                const diff_y: f32 = center - (@as(f32, @floatFromInt(y)) + 0.5);
+                const distance_to_center = @sqrt(
+                    (diff_x * diff_x) + (diff_y * diff_y),
+                );
+
+                // Fake anti-aliasing.
+                if (distance_to_center < R + 0.5 and distance_to_center > R - (b + 0.3)) {
+                    self.outline_data.?[y * stride + x] = 0x44;
+                }
+
+                if (distance_to_center < R) {
+                    if (distance_to_center > R - b) {
+                        self.outline_data.?[y * stride + x] = 0xff;
+                    }
+                    self.background_data.?[y * stride + x] = 0xff;
+                }
+            }
+        }
+    }
+
+    pub fn deinit(self: *CircleMask, alloc: mem.Allocator) void {
+        if (self.outline) |o| {
+            _ = o.unref();
+            self.outline = null;
+        }
+        if (self.background) |b| {
+            _ = b.unref();
+            self.background = null;
+        }
+        if (self.outline_data) |o| {
+            alloc.free(o);
+            self.outline_data = null;
+        }
+        if (self.background_data) |b| {
+            alloc.free(b);
+            self.background_data = null;
+        }
+    }
+};
+
 const Surface = struct {
     w: *Wayland = undefined,
 
@@ -531,13 +636,7 @@ const Surface = struct {
 
     scale: u31 = 1, // TODO use buffer_scale events
 
-    circle: struct {
-        outline: ?*pixman.Image = null,
-        background: ?*pixman.Image = null,
-
-        outline_data: ?[]u8 = null,
-        background_data: ?[]u8 = null,
-    } = .{},
+    circle: CircleMask = .{},
 
     /// Cursor / Touch hotspots, populated on first render.
     hotspots: std.ArrayListUnmanaged(HotSpot) = .{},
@@ -565,92 +664,7 @@ const Surface = struct {
                 @divFloor(self.width, 2),
                 @divFloor(self.height, 2),
             );
-            const size = corner_radius * 2;
-            debug.assert(self.circle.outline == null);
-            debug.assert(self.circle.outline_data == null);
-            debug.assert(self.circle.background == null);
-            debug.assert(self.circle.background_data == null);
-
-            const transparent = pixman.Color{ .red = 0, .green = 0, .blue = 0, .alpha = 0 };
-
-            // I am way to lazy to port this insane C macro to zig code,
-            // especially since the format is hardcoded.
-            const pixman_format_bpp_of_a8 = 8;
-            const stride: u31 = pixman_format_bpp_of_a8 * size;
-
-            const alloc = self.w.config.alloc;
-            self.circle.outline_data = try alloc.alloc(u8, size * stride);
-            errdefer {
-                alloc.free(self.circle.outline_data.?);
-                self.circle.outline_data = null;
-            }
-            self.circle.outline = pixman.Image.createBits(
-                .a8,
-                @intCast(size),
-                @intCast(size),
-                @as([*c]u32, @alignCast(@ptrCast(self.circle.outline_data.?.ptr))),
-                @intCast(stride),
-            );
-            errdefer _ = self.circle.outline.?.unref();
-            _ = pixman.Image.fillRectangles(
-                .src,
-                self.circle.outline.?,
-                &transparent,
-                1,
-                &[1]pixman.Rectangle16{
-                    .{ .x = 0, .y = 0, .width = size, .height = size },
-                },
-            );
-
-            self.circle.background_data = try alloc.alloc(u8, size * stride);
-            errdefer {
-                alloc.free(self.circle.background_data.?);
-                self.circle.background_data = null;
-            }
-            self.circle.background = pixman.Image.createBits(
-                .a8,
-                @intCast(size),
-                @intCast(size),
-                @as([*c]u32, @alignCast(@ptrCast(self.circle.background_data.?.ptr))),
-                @intCast(stride),
-            );
-            errdefer _ = self.circle.background.?.unref();
-            _ = pixman.Image.fillRectangles(
-                .src,
-                self.circle.background.?,
-                &transparent,
-                1,
-                &[1]pixman.Rectangle16{
-                    .{ .x = 0, .y = 0, .width = size, .height = size },
-                },
-            );
-
-            // TODO maybe draw a "squircle"?
-            const center = @as(f32, @floatFromInt(size)) / 2.0;
-            for (0..size) |x| {
-                const diff_x: f32 = center - (@as(f32, @floatFromInt(x)) + 0.5);
-                for (0..size) |y| {
-                    const diff_y: f32 = center - (@as(f32, @floatFromInt(y)) + 0.5);
-                    const distance_to_center = @sqrt(
-                        (diff_x * diff_x) + (diff_y * diff_y),
-                    );
-
-                    const R: f32 = @floatFromInt(corner_radius);
-                    const b: f32 = @floatFromInt(uiconf.border);
-
-                    // Fake anti-aliasing.
-                    if (distance_to_center < R + 0.5 and distance_to_center > R - (b + 0.3)) {
-                        self.circle.outline_data.?[y * stride + x] = 0x44;
-                    }
-
-                    if (distance_to_center < R) {
-                        if (distance_to_center > R - b) {
-                            self.circle.outline_data.?[y * stride + x] = 0xff;
-                        }
-                        self.circle.background_data.?[y * stride + x] = 0xff;
-                    }
-                }
-            }
+            try self.circle.init(self.w.config.alloc, corner_radius, uiconf.border);
         }
 
         layer_surface.setListener(*Surface, layerSurfaceListener, self);
@@ -725,23 +739,7 @@ const Surface = struct {
         self.hotspots.deinit(self.w.config.alloc);
         self.layer_surface.destroy();
         self.wl_surface.destroy();
-
-        if (self.circle.outline) |o| {
-            _ = o.unref();
-            self.circle.outline = null;
-        }
-        if (self.circle.background) |b| {
-            _ = b.unref();
-            self.circle.background = null;
-        }
-        if (self.circle.outline_data) |o| {
-            self.w.config.alloc.free(o);
-            self.circle.outline_data = null;
-        }
-        if (self.circle.background_data) |b| {
-            self.w.config.alloc.free(b);
-            self.circle.background_data = null;
-        }
+        self.circle.deinit(self.w.config.alloc);
     }
 
     pub fn hotspotFromPoint(self: *Surface, x: u31, y: u31) ?*HotSpot {
