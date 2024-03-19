@@ -12,17 +12,12 @@ Wayprompt ships multiple executables:
 
 * `wayprompt`: CLI prompt tool.
 * `pinentry-wayprompt`: drop-in pinentry replacement, for example for gpg.
+* `wayprompt-ssh-askpass`: ssh-askpass implementation, for use with ssh and
+  programs that wrap it, like git and rsync.
 
 All executables use the same configuration file, read `wayprompt.5` for details.
 
-To use `pinentry-wayprompt` with gpg, you need to configure gpg-agent (read
-`gpg-agent.1`).
-Its configuration file is commonly found at `~/.gnupg/gpg-agent.conf`.
-Inside this file, add the following line (actual path to executable will depend
-on installation method):
-```
-pinentry-program ~/.local/bin/pinentry-wayprompt
-```
+Read the man pages of the different versions to learn how to set them up.
 
 
 ## Building
