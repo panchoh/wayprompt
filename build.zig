@@ -96,5 +96,6 @@ pub fn build(b: *std.Build) !void {
 
     b.installFile("doc/wayprompt.1", "share/man/man1/wayprompt.1");
     b.installFile("doc/pinentry-wayprompt.1", "share/man/man1/pinentry-wayprompt.1");
+    b.installFile("doc/wayprompt-ssh-askpass.1", "share/man/man1/wayprompt-ssh-askpass.1");
     b.installFile("doc/wayprompt.5", "share/man/man5/wayprompt.5");
 }
