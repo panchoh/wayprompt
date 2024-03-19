@@ -82,16 +82,12 @@ pub fn main() !u8 {
 
     try frontend.enterMode(if (getpin) .getpin else .message);
 
+    var ret: u8 = undefined;
     while (true) {
         {
             const ev = try frontend.flush();
             if (ev != .none) {
-                switch (ev) {
-                    .user_abort => try writeOutput("cancel", null),
-                    .user_notok => try writeOutput("not-ok", null),
-                    .user_ok => try writeOutput("ok", if (getpin) secret.slice() else null),
-                    else => unreachable,
-                }
+                try handleEvent(ev, &ret);
                 break;
             }
         }
@@ -100,20 +96,35 @@ pub fn main() !u8 {
 
         if (fds[0].revents & os.POLL.IN != 0) {
             const ev = try frontend.handleEvent();
-            switch (ev) {
-                .none => continue,
-                .user_abort => try writeOutput("cancel", null),
-                .user_notok => try writeOutput("not-ok", null),
-                .user_ok => try writeOutput("ok", if (getpin) secret.slice() else null),
+            if (ev != .none) {
+                try handleEvent(ev, &ret);
+                break;
             }
-            break;
         } else {
             try frontend.noEvent();
         }
     }
     _ = try frontend.flush();
 
-    return 0;
+    return ret;
+}
+
+fn handleEvent(ev: Frontend.Event, ret: *u8) !void {
+    switch (ev) {
+        .user_ok => {
+            try writeOutput("ok", if (getpin) secret.slice() else null);
+            ret.* = 0;
+        },
+        .user_abort => {
+            try writeOutput("cancel", null);
+            ret.* = 10;
+        },
+        .user_notok => {
+            try writeOutput("not-ok", null);
+            ret.* = 20;
+        },
+        else => unreachable,
+    }
 }
 
 fn writeOutput(comptime action: []const u8, pin: ?[]const u8) !void {
