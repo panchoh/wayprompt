@@ -92,6 +92,8 @@ pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_test.step);
 
+    b.installFile("bin/wayprompt-ssh-askpass", "bin/wayprompt-ssh-askpass");
+
     b.installFile("doc/wayprompt.1", "share/man/man1/wayprompt.1");
     b.installFile("doc/pinentry-wayprompt.1", "share/man/man1/pinentry-wayprompt.1");
     b.installFile("doc/wayprompt.5", "share/man/man5/wayprompt.5");
