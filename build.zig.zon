@@ -1,0 +1,27 @@
+.{
+    .name = "wayprompt",
+    .version = "0.2.0",
+    .paths = .{""},
+    .dependencies = .{
+        .@"zig-wayland" = .{
+            .url = "https://codeberg.org/ifreund/zig-wayland/archive/v0.1.0.tar.gz",
+            .hash = "1220b0f8f822c1625af7aae4cb3ab2c4ec1a4c0e99ef32867b2a8d88bb070b3e7f6d",
+        },
+        .@"zig-fcft" = .{
+            .url = "https://git.sr.ht/~novakane/zig-fcft/archive/7881eac29bf0d9de4df1fc31df380e8f5f620585.tar.gz",
+            .hash = "1220cc15677890989c54713a7c9d90b6999ad21bdb78fe411b016335daa6cea9f9dd",
+        },
+        .@"zig-xkbcommon" = .{
+            .url = "https://codeberg.org/ifreund/zig-xkbcommon/archive/v0.1.0.tar.gz",
+            .hash = "1220733d45419f34cc6c24a2a1bba4da2eb2f0319a846546ac99eb86b51d7ec7637c",
+        },
+        .@"zig-spoon" = .{
+            .url = "https://git.sr.ht/~uncomfy/zig-spoon/archive/0b66d77f5a89c4136daa13b02cebe945feebc668.tar.gz",
+            .hash = "1220733d45419f34cc6c24a2a1bba4da2eb2f0319a846546ac99eb86b51d7ec7637c",
+        },
+        .@"zig-pixman" = .{
+            .url = "https://codeberg.org/ifreund/zig-pixman/archive/v0.1.0.tar.gz",
+            .hash = "122014eeb4600a059bdcfe1c864862f17e6d5e4237e3bb7d6818f2a5583f6f4eb843",
+        },
+    },
+}

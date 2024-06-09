@@ -2,7 +2,7 @@ const std = @import("std");
 const fs = std.fs;
 const mem = std.mem;
 
-const Scanner = @import("deps/zig-wayland/build.zig").Scanner;
+const Scanner = @import("zig-wayland").Scanner;
 
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
@@ -22,22 +22,11 @@ pub fn build(b: *std.Build) !void {
     scanner.generate("wl_seat", 8);
     scanner.generate("wl_output", 4);
 
-    const wayland = b.createModule(.{ .source_file = scanner.result });
-    const xkbcommon = b.createModule(.{
-        .source_file = .{ .path = "deps/zig-xkbcommon/src/xkbcommon.zig" },
-    });
-    const pixman = b.createModule(.{
-        .source_file = .{ .path = "deps/zig-pixman/pixman.zig" },
-    });
-    const spoon = b.createModule(.{
-        .source_file = .{ .path = "deps/zig-spoon/import.zig" },
-    });
-    const fcft = b.createModule(.{
-        .source_file = .{ .path = "deps/zig-fcft/fcft.zig" },
-        .dependencies = &.{
-            .{ .name = "pixman", .module = pixman },
-        },
-    });
+    const wayland = b.dependency("zig-wayland", .{}).module("wayland");
+    const xkbcommon = b.dependency("zig-xkbcommon", .{}).module("xkbcommon");
+    const pixman = b.dependency("zig-pixman", .{}).module("pixman");
+    const spoon = b.dependency("zig-spoon", .{}).module("spoon");
+    const fcft = b.dependency("zig-fcft", .{}).module("fcft");
 
     const wayprompt_cli = b.addExecutable(.{
         .name = "wayprompt",
@@ -45,19 +34,20 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
+    wayprompt_cli.root_module.addOptions("build_options", options);
     wayprompt_cli.linkLibC();
-    wayprompt_cli.addModule("wayland", wayland);
+    wayprompt_cli.root_module.addImport("wayland", wayland);
     wayprompt_cli.linkSystemLibrary("wayland-client");
     wayprompt_cli.linkSystemLibrary("wayland-cursor");
     scanner.addCSource(wayprompt_cli);
-    wayprompt_cli.addModule("fcft", fcft);
+    wayprompt_cli.root_module.addImport("fcft", fcft);
     wayprompt_cli.linkSystemLibrary("fcft");
-    wayprompt_cli.addModule("xkbcommon", xkbcommon);
+    wayprompt_cli.root_module.addImport("xkbcommon", xkbcommon);
     wayprompt_cli.linkSystemLibrary("xkbcommon");
-    wayprompt_cli.addModule("pixman", pixman);
+    wayprompt_cli.root_module.addImport("pixman", pixman);
     wayprompt_cli.linkSystemLibrary("pixman-1");
-    wayprompt_cli.addModule("spoon", spoon);
-    wayprompt_cli.addOptions("build_options", options);
+    wayprompt_cli.root_module.addImport("spoon", spoon);
+    wayprompt_cli.root_module.addOptions("build_options", options);
     wayprompt_cli.pie = pie;
     b.installArtifact(wayprompt_cli);
 
@@ -68,18 +58,18 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
     wayprompt_pinentry.linkLibC();
-    wayprompt_pinentry.addModule("wayland", wayland);
+    wayprompt_pinentry.root_module.addImport("wayland", wayland);
     wayprompt_pinentry.linkSystemLibrary("wayland-client");
     wayprompt_pinentry.linkSystemLibrary("wayland-cursor");
     scanner.addCSource(wayprompt_pinentry);
-    wayprompt_pinentry.addModule("fcft", fcft);
+    wayprompt_pinentry.root_module.addImport("fcft", fcft);
     wayprompt_pinentry.linkSystemLibrary("fcft");
-    wayprompt_pinentry.addModule("xkbcommon", xkbcommon);
+    wayprompt_pinentry.root_module.addImport("xkbcommon", xkbcommon);
     wayprompt_pinentry.linkSystemLibrary("xkbcommon");
-    wayprompt_pinentry.addModule("pixman", pixman);
+    wayprompt_pinentry.root_module.addImport("pixman", pixman);
     wayprompt_pinentry.linkSystemLibrary("pixman-1");
-    wayprompt_pinentry.addModule("spoon", spoon);
-    wayprompt_pinentry.addOptions("build_options", options);
+    wayprompt_pinentry.root_module.addImport("spoon", spoon);
+    wayprompt_pinentry.root_module.addOptions("build_options", options);
     wayprompt_pinentry.pie = pie;
     b.installArtifact(wayprompt_pinentry);
 
