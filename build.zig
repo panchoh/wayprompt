@@ -22,7 +22,7 @@ pub fn build(b: *std.Build) !void {
     scanner.generate("wl_seat", 8);
     scanner.generate("wl_output", 4);
 
-    const wayland = b.dependency("zig-wayland", .{}).module("wayland");
+    const wayland = b.createModule(.{ .root_source_file = scanner.result });
     const xkbcommon = b.dependency("zig-xkbcommon", .{}).module("xkbcommon");
     const pixman = b.dependency("zig-pixman", .{}).module("pixman");
     const spoon = b.dependency("zig-spoon", .{}).module("spoon");
@@ -30,7 +30,7 @@ pub fn build(b: *std.Build) !void {
 
     const wayprompt_cli = b.addExecutable(.{
         .name = "wayprompt",
-        .root_source_file = .{ .path = "src/wayprompt-cli.zig" },
+        .root_source_file = b.path("src/wayprompt-cli.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -53,7 +53,7 @@ pub fn build(b: *std.Build) !void {
 
     const wayprompt_pinentry = b.addExecutable(.{
         .name = "pinentry-wayprompt",
-        .root_source_file = .{ .path = "src/wayprompt-pinentry.zig" },
+        .root_source_file = b.path("src/wayprompt-pinentry.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -74,7 +74,7 @@ pub fn build(b: *std.Build) !void {
     b.installArtifact(wayprompt_pinentry);
 
     const tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/tests.zig" },
+        .root_source_file = b.path("src/tests.zig"),
         .target = target,
         .optimize = optimize,
     });

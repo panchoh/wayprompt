@@ -3,25 +3,25 @@
     .version = "0.2.0",
     .paths = .{""},
     .dependencies = .{
-        .@"zig-wayland" = .{
-            .url = "https://codeberg.org/ifreund/zig-wayland/archive/v0.1.0.tar.gz",
-            .hash = "1220b0f8f822c1625af7aae4cb3ab2c4ec1a4c0e99ef32867b2a8d88bb070b3e7f6d",
-        },
-        .@"zig-fcft" = .{
-            .url = "https://git.sr.ht/~novakane/zig-fcft/archive/7881eac29bf0d9de4df1fc31df380e8f5f620585.tar.gz",
-            .hash = "1220cc15677890989c54713a7c9d90b6999ad21bdb78fe411b016335daa6cea9f9dd",
-        },
-        .@"zig-xkbcommon" = .{
-            .url = "https://codeberg.org/ifreund/zig-xkbcommon/archive/v0.1.0.tar.gz",
-            .hash = "1220733d45419f34cc6c24a2a1bba4da2eb2f0319a846546ac99eb86b51d7ec7637c",
-        },
         .@"zig-spoon" = .{
-            .url = "https://git.sr.ht/~uncomfy/zig-spoon/archive/0b66d77f5a89c4136daa13b02cebe945feebc668.tar.gz",
-            .hash = "1220733d45419f34cc6c24a2a1bba4da2eb2f0319a846546ac99eb86b51d7ec7637c",
+            .url = "https://git.sr.ht/~leon_plickat/zig-spoon/archive/fdba8e643c9558254bf4e6c600dfbd782fa7a267.tar.gz",
+            .hash = "122052b78ad23bbe4d5fc4755359a7724a2e36ceed0c67f3cb2194ce0ead510ce22c",
         },
         .@"zig-pixman" = .{
-            .url = "https://codeberg.org/ifreund/zig-pixman/archive/v0.1.0.tar.gz",
-            .hash = "122014eeb4600a059bdcfe1c864862f17e6d5e4237e3bb7d6818f2a5583f6f4eb843",
+            .url = "https://codeberg.org/ifreund/zig-pixman/archive/v0.2.0.tar.gz",
+            .hash = "12209db20ce873af176138b76632931def33a10539387cba745db72933c43d274d56",
+        },
+        .@"zig-wayland" = .{
+            .url = "https://codeberg.org/ifreund/zig-wayland/archive/v0.2.0.tar.gz",
+            .hash = "1220687c8c47a48ba285d26a05600f8700d37fc637e223ced3aa8324f3650bf52242",
+        },
+        .@"zig-xkbcommon" = .{
+            .url = "https://codeberg.org/ifreund/zig-xkbcommon/archive/v0.2.0.tar.gz",
+            .hash = "1220c90b2228d65fd8427a837d31b0add83e9fade1dcfa539bb56fd06f1f8461605f",
+        },
+        .@"zig-fcft" = .{
+            .url = "https://git.sr.ht/~novakane/zig-fcft/archive/1.1.0.tar.gz",
+            .hash = "1220a4029ee3ee70d3175c69878e2b70dccd000c4324bc74ba800d8a143b7250fb38",
         },
     },
 }
