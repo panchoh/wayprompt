@@ -1,7 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const ascii = std.ascii;
-const os = std.os;
+const posix = std.posix;
 const mem = std.mem;
 const math = std.math;
 const unicode = std.unicode;
@@ -429,16 +429,16 @@ const Seat = struct {
     fn keyboardListener(_: *wl.Keyboard, event: wl.Keyboard.Event, self: *Seat) void {
         switch (event) {
             .keymap => |ev| {
-                defer os.close(ev.fd);
+                defer posix.close(ev.fd);
                 if (ev.format != .xkb_v1) {
                     self.w.abort(error.UnsupportedKeyboardLayoutFormat);
                     return;
                 }
-                const keymap_str = os.mmap(null, ev.size, os.PROT.READ, os.MAP.PRIVATE, ev.fd, 0) catch {
+                const keymap_str = posix.mmap(null, ev.size, posix.PROT.READ, posix.MAP{ .TYPE = std.os.linux.MAP_TYPE.PRIVATE }, ev.fd, 0) catch {
                     self.w.abort(error.OutOfMemory);
                     return;
                 };
-                defer os.munmap(keymap_str);
+                defer posix.munmap(keymap_str);
                 const keymap = xkb.Keymap.newFromBuffer(
                     self.w.xkb_context.?,
                     keymap_str.ptr,
@@ -1255,22 +1255,22 @@ const Buffer = struct {
 
         const fd = blk: {
             if (builtin.target.os.tag == .linux) {
-                break :blk try os.memfd_createZ("/wayprompt", os.linux.MFD.CLOEXEC);
+                break :blk try posix.memfd_createZ("/wayprompt", std.os.linux.MFD.CLOEXEC);
             }
             @compileError("patches welcome");
         };
-        defer os.close(fd);
-        try os.ftruncate(fd, size);
+        defer posix.close(fd);
+        try posix.ftruncate(fd, size);
 
-        const data = mem.bytesAsSlice(u8, try os.mmap(
+        const data = mem.bytesAsSlice(u8, try posix.mmap(
             null,
             size,
-            os.PROT.READ | os.PROT.WRITE,
-            os.MAP.SHARED,
+            posix.PROT.READ | posix.PROT.WRITE,
+            posix.MAP{ .TYPE = std.os.linux.MAP_TYPE.SHARED },
             fd,
             0,
         ));
-        errdefer os.munmap(data);
+        errdefer posix.munmap(data);
 
         const shm_pool = try w.shm.?.createPool(fd, size);
         defer shm_pool.destroy();
@@ -1300,7 +1300,7 @@ const Buffer = struct {
     fn deinit(self: Buffer) void {
         if (self.pixman_image) |p| _ = p.unref();
         if (self.wl_buffer) |wb| wb.destroy();
-        if (self.data) |d| os.munmap(d);
+        if (self.data) |d| posix.munmap(d);
     }
 
     fn bufferListener(_: *wl.Buffer, event: wl.Buffer.Event, self: *Buffer) void {
@@ -1345,12 +1345,12 @@ xkb_context: ?*xkb.Context = undefined,
 
 exit_reason: ?anyerror = null,
 
-pub fn init(self: *Wayland, cfg: *Config) !os.fd_t {
+pub fn init(self: *Wayland, cfg: *Config) !posix.fd_t {
     self.config = cfg;
 
     const wayland_display = blk: {
         if (cfg.wayland_display) |wd| break :blk wd;
-        if (os.getenv("WAYLAND_DISPLAY")) |wd| break :blk wd;
+        if (posix.getenv("WAYLAND_DISPLAY")) |wd| break :blk wd;
         return error.NoWaylandDisplay;
     };
     log.debug("trying to connect to '{s}'.", .{wayland_display});

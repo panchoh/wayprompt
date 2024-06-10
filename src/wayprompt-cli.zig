@@ -1,14 +1,13 @@
 const std = @import("std");
-const os = std.os;
+const posix = std.posix;
 const mem = std.mem;
 const heap = std.heap;
 const debug = std.debug;
 const io = std.io;
 const meta = std.meta;
 
-pub const std_options = struct {
-    pub const logFn = @import("log.zig").log;
-};
+pub const logFn = @import("log.zig").log;
+pub const std_options = std.Options{ .logFn = logFn };
 
 const logger = std.log.scoped(.wayprompt);
 
@@ -73,9 +72,9 @@ pub fn main() !u8 {
     }
     defer if (getpin) secret.deinit(alloc);
 
-    var fds: [1]os.pollfd = .{.{
+    var fds: [1]posix.pollfd = .{.{
         .fd = try frontend.init(&config),
-        .events = os.POLL.IN,
+        .events = posix.POLL.IN,
         .revents = undefined,
     }};
     defer frontend.deinit();
@@ -92,9 +91,9 @@ pub fn main() !u8 {
             }
         }
 
-        _ = try os.poll(&fds, -1);
+        _ = try posix.poll(&fds, -1);
 
-        if (fds[0].revents & os.POLL.IN != 0) {
+        if (fds[0].revents & posix.POLL.IN != 0) {
             const ev = try frontend.handleEvent();
             if (ev != .none) {
                 try handleEvent(ev, &ret);
@@ -177,7 +176,7 @@ const FlagIt = struct {
 fn parseCmdFlags() !void {
     const alloc = arena.allocator();
 
-    var it = FlagIt.new(&os.argv);
+    var it = FlagIt.new(&std.os.argv);
     while (it.next()) |flag| {
         if (mem.eql(u8, flag, "--title")) {
             try dupeArg(alloc, &it, &config.labels.title, "--title");
@@ -222,7 +221,7 @@ fn parseCmdFlags() !void {
                 \\alternative versions. wayprompt is developed and maintained by
                 \\Leon Henrik Plickat <leonhenrik.plickat@stud.uni-goettingen.de>.
                 \\
-            , .{os.argv[0]});
+            , .{std.os.argv[0]});
             try out_buffer.flush();
             return error.DumpedUsage;
         } else {

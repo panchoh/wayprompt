@@ -3,7 +3,7 @@ const std = @import("std");
 const ascii = std.ascii;
 const heap = std.heap;
 const mem = std.mem;
-const os = std.os;
+const posix = std.posix;
 const unicode = std.unicode;
 
 const Self = @This();
@@ -27,7 +27,7 @@ pub fn init(self: *Self, alloc: mem.Allocator) !void {
         var attempts: usize = 0;
         while (attempts < 10) : (attempts += 1) {
             const res = mlock(self.buffer.ptr, self.buffer.len);
-            switch (os.errno(res)) {
+            switch (posix.errno(res)) {
                 .SUCCESS => break,
                 .AGAIN => continue,
                 else => return error.UnexpectedError,
@@ -41,8 +41,8 @@ pub fn init(self: *Self, alloc: mem.Allocator) !void {
     if (builtin.target.os.tag == .linux) {
         var attempts: usize = 0;
         while (attempts < 10) : (attempts += 1) {
-            const res = os.system.madvise(self.buffer.ptr, self.buffer.len, os.MADV.DONTDUMP);
-            switch (os.errno(res)) {
+            const res = posix.system.madvise(self.buffer.ptr, self.buffer.len, posix.MADV.DONTDUMP);
+            switch (posix.errno(res)) {
                 .SUCCESS => break,
                 .AGAIN => continue,
                 else => return error.UnexpectedError,

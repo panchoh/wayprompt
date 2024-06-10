@@ -1,6 +1,6 @@
 const std = @import("std");
 const mem = std.mem;
-const os = std.os;
+const posix = std.posix;
 const log = std.log.scoped(.frontend);
 
 const pixman = @import("pixman");
@@ -32,7 +32,7 @@ const Implementation = union(enum) {
 
 impl: Implementation = undefined,
 
-pub fn init(self: *Frontend, cfg: *Config) !os.fd_t {
+pub fn init(self: *Frontend, cfg: *Config) !posix.fd_t {
 
     // First we try to do a Wayland.
     self.impl = .{ .wayland = .{} };

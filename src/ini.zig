@@ -52,7 +52,7 @@ fn IniTok(comptime T: type) type {
                     }
 
                     // Is this line an assignment?
-                    var eq_pos = blk: {
+                    const eq_pos = blk: {
                         for (buf, 0..) |char, i| {
                             if (char == '=') {
                                 if (i == buf.len - 1) return error.InvalidLine;

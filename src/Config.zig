@@ -1,7 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 const fs = std.fs;
-const os = std.os;
+const posix = std.posix;
 const fmt = std.fmt;
 const meta = std.meta;
 const math = std.math;
@@ -162,7 +162,7 @@ pub fn reset(self: *Config, alloc: mem.Allocator) void {
 pub fn parse(self: *Config, alloc: mem.Allocator) !void {
     const path = try getConfigPath(alloc);
     defer alloc.free(path);
-    os.access(path, os.R_OK) catch return;
+    posix.access(path, posix.R_OK) catch return;
 
     const file = try fs.cwd().openFile(path, .{});
     defer file.close();
@@ -203,12 +203,12 @@ pub fn parse(self: *Config, alloc: mem.Allocator) !void {
 }
 
 fn getConfigPath(alloc: mem.Allocator) ![]const u8 {
-    if (os.getenv("XDG_CONFIG_HOME")) |xdg_config_home| {
+    if (posix.getenv("XDG_CONFIG_HOME")) |xdg_config_home| {
         return try fs.path.join(alloc, &[_][]const u8{
             xdg_config_home,
             "wayprompt/config.ini",
         });
-    } else if (os.getenv("HOME")) |home| {
+    } else if (posix.getenv("HOME")) |home| {
         return try fs.path.join(alloc, &[_][]const u8{
             home,
             ".config/wayprompt/config.ini",

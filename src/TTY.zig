@@ -1,6 +1,6 @@
 const std = @import("std");
 const debug = std.debug;
-const os = std.os;
+const posix = std.posix;
 const io = std.io;
 const math = std.math;
 const unicode = std.unicode;
@@ -42,7 +42,7 @@ term: spoon.Term = undefined,
 config: *Config = undefined,
 mode: Frontend.InterfaceMode = .none,
 
-pub fn init(self: *TTY, cfg: *Config) !os.fd_t {
+pub fn init(self: *TTY, cfg: *Config) !posix.fd_t {
     self.config = cfg;
 
     // Only try to fall back to TTY mode when a TTY is set.
@@ -189,7 +189,7 @@ fn renderContent(self: *TTY, rc: *spoon.Term.RenderContext, str: []const u8, att
 }
 
 fn renderButton(self: *TTY, rc: *spoon.Term.RenderContext, comptime button: []const u8, str: []const u8, line: *usize) !void {
-    var first = line.*;
+    const first = line.*;
     try rc.setAttribute(.{});
     try rc.moveCursorTo(line.*, 0);
     var it = LineIterator.from(str);

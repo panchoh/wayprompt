@@ -2,6 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const ascii = std.ascii;
 const mem = std.mem;
+const posix = std.posix;
 const os = std.os;
 const io = std.io;
 const fs = std.fs;
@@ -9,8 +10,10 @@ const fmt = std.fmt;
 const heap = std.heap;
 const debug = std.debug;
 
-pub const std_options = struct {
-    pub const logFn = @import("log.zig").log;
+const logFn = @import("log.zig").log;
+
+pub const std_options = std.Options{
+    .logFn = logFn,
 };
 
 const logger = std.log.scoped(.wayprompt);
@@ -66,18 +69,18 @@ pub fn main() !u8 {
 
     const fds_stdin = 0;
     const fds_frontend = 1;
-    var fds: [2]os.pollfd = undefined;
+    var fds: [2]posix.pollfd = undefined;
 
     fds[fds_stdin] = .{
         .fd = stdin.handle,
-        .events = os.POLL.IN,
+        .events = posix.POLL.IN,
         .revents = undefined,
     };
     var stdin_closed: bool = false;
 
     fds[fds_frontend] = .{
         .fd = try frontend.init(&config),
-        .events = os.POLL.IN,
+        .events = posix.POLL.IN,
         .revents = undefined,
     };
     defer frontend.deinit();
@@ -103,10 +106,10 @@ pub fn main() !u8 {
         }
 
         // We don't poll stdin if it has been closed to avoid pointless spinning.
-        _ = try os.poll(if (stdin_closed) fds[1..2] else &fds, -1);
+        _ = try posix.poll(if (stdin_closed) fds[1..2] else &fds, -1);
 
         if (!stdin_closed) {
-            if (fds[fds_stdin].revents & os.POLL.IN != 0) {
+            if (fds[fds_stdin].revents & posix.POLL.IN != 0) {
                 const read = try stdin.read(&in_buffer);
                 if (read == 0) break;
 
@@ -122,14 +125,14 @@ pub fn main() !u8 {
             }
 
             logger.debug("pipe closed.", .{});
-            if (fds[fds_stdin].revents & os.POLL.HUP != 0) {
+            if (fds[fds_stdin].revents & posix.POLL.HUP != 0) {
                 stdin_closed = true;
             }
         }
 
         if (stdin_closed and mode == .none) break;
 
-        if (fds[fds_frontend].revents & os.POLL.IN != 0) {
+        if (fds[fds_frontend].revents & posix.POLL.IN != 0) {
             if (frontend.handleEvent()) |ev| {
                 try handleFrontendEvent(out_buffer.writer(), ev);
             } else |err| {
