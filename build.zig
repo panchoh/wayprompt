@@ -8,7 +8,9 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const options = b.addOptions();
+    const strip = b.option(bool, "strip", "Omit debug information") orelse false;
     const pie = b.option(bool, "pie", "Build with PIE support (by default false)") orelse false;
+    const llvm = !(b.option(bool, "no-llvm", "(expirimental) Use non-LLVM x86 Zig backend") orelse false);
 
     const scanner = Scanner.create(b, .{});
     scanner.addCustomProtocol("protocol/wlr-layer-shell-unstable-v1.xml");
@@ -33,6 +35,9 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = b.path("src/wayprompt-cli.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = strip,
+        .use_llvm = llvm,
+        .use_lld = llvm,
     });
     wayprompt_cli.root_module.addOptions("build_options", options);
     wayprompt_cli.linkLibC();
@@ -56,6 +61,9 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = b.path("src/wayprompt-pinentry.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = strip,
+        .use_llvm = llvm,
+        .use_lld = llvm,
     });
     wayprompt_pinentry.linkLibC();
     wayprompt_pinentry.root_module.addImport("wayland", wayland);
