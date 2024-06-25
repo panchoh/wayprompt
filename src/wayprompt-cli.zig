@@ -2,6 +2,7 @@ const std = @import("std");
 const posix = std.posix;
 const mem = std.mem;
 const heap = std.heap;
+const process = std.process;
 const debug = std.debug;
 const io = std.io;
 const meta = std.meta;
@@ -156,27 +157,14 @@ fn writeOutput(comptime action: []const u8, pin: ?[]const u8) !void {
     try out_buffer.flush();
 }
 
-const FlagIt = struct {
-    const Self = @This();
-
-    argv: *[][*:0]u8,
-    index: usize = 1,
-
-    pub fn new(argv: *[][*:0]u8) Self {
-        return Self{ .argv = argv };
-    }
-
-    pub fn next(self: *Self) ?[]const u8 {
-        if (self.index >= self.argv.len) return null;
-        defer self.index += 1;
-        return mem.span(self.argv.*[self.index]);
-    }
-};
-
 fn parseCmdFlags() !void {
     const alloc = arena.allocator();
 
-    var it = FlagIt.new(&std.os.argv);
+    var it = process.ArgIteratorPosix.init();
+
+    // On POSIX argv is static.
+    const argv0 = it.next() orelse "wayprompt";
+
     while (it.next()) |flag| {
         if (mem.eql(u8, flag, "--title")) {
             try dupeArg(alloc, &it, &config.labels.title, "--title");
@@ -221,7 +209,7 @@ fn parseCmdFlags() !void {
                 \\alternative versions. wayprompt is developed and maintained by
                 \\Leon Henrik Plickat <leonhenrik.plickat@stud.uni-goettingen.de>.
                 \\
-            , .{std.os.argv[0]});
+            , .{argv0});
             try out_buffer.flush();
             return error.DumpedUsage;
         } else {
@@ -231,7 +219,12 @@ fn parseCmdFlags() !void {
     }
 }
 
-fn dupeArg(alloc: mem.Allocator, it: *FlagIt, dest: *?[]const u8, comptime flag: []const u8) !void {
+fn dupeArg(
+    alloc: mem.Allocator,
+    it: *process.ArgIteratorPosix,
+    dest: *?[]const u8,
+    comptime flag: []const u8,
+) !void {
     if (dest.* != null) {
         logger.err("redundant '{s}' flag.", .{flag});
         return error.RedundantFlag;
