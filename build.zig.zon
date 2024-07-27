@@ -3,6 +3,10 @@
     .version = "0.2.0",
     .paths = .{""},
     .dependencies = .{
+        .@"zig-ini" = .{
+            .url = "https://git.sr.ht/~leon_plickat/zig-ini/archive/879c74a3a801d49fa34343aebd55a22f591899b3.tar.gz",
+            .hash = "12201bbf05e1fb73323a9b13d2599dc4bf82851e6d328d7523a1af5b861a87edf286",
+        },
         .@"zig-spoon" = .{
             .url = "https://git.sr.ht/~leon_plickat/zig-spoon/archive/fdba8e643c9558254bf4e6c600dfbd782fa7a267.tar.gz",
             .hash = "122052b78ad23bbe4d5fc4755359a7724a2e36ceed0c67f3cb2194ce0ead510ce22c",

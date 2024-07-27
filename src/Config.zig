@@ -9,8 +9,8 @@ const debug = std.debug;
 const log = std.log.scoped(.config);
 
 const pixman = @import("pixman");
+const ini = @import("ini");
 
-const ini = @import("ini.zig");
 const SecretBuffer = @import("SecretBuffer.zig");
 
 const Config = @This();
@@ -171,7 +171,7 @@ pub fn parse(self: *Config, alloc: mem.Allocator) !void {
     var section: Section = .none;
 
     var buffer = std.io.bufferedReader(file.reader());
-    var it = ini.tokenize(buffer.reader());
+    var it = ini.tokenize(buffer.reader(), .semicolon);
     var line: usize = 0;
     while (it.next(&line) catch |err| {
         if (err == error.InvalidLine) {

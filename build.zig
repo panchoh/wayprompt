@@ -29,6 +29,7 @@ pub fn build(b: *std.Build) !void {
     const pixman = b.dependency("zig-pixman", .{}).module("pixman");
     const spoon = b.dependency("zig-spoon", .{}).module("spoon");
     const fcft = b.dependency("zig-fcft", .{}).module("fcft");
+    const ini = b.dependency("zig-ini", .{}).module("ini");
 
     const wayprompt_cli = b.addExecutable(.{
         .name = "wayprompt",
@@ -45,6 +46,7 @@ pub fn build(b: *std.Build) !void {
     wayprompt_cli.linkSystemLibrary("wayland-client");
     wayprompt_cli.linkSystemLibrary("wayland-cursor");
     scanner.addCSource(wayprompt_cli);
+    wayprompt_cli.root_module.addImport("ini", ini);
     wayprompt_cli.root_module.addImport("fcft", fcft);
     wayprompt_cli.linkSystemLibrary("fcft");
     wayprompt_cli.root_module.addImport("xkbcommon", xkbcommon);
@@ -70,6 +72,7 @@ pub fn build(b: *std.Build) !void {
     wayprompt_pinentry.linkSystemLibrary("wayland-client");
     wayprompt_pinentry.linkSystemLibrary("wayland-cursor");
     scanner.addCSource(wayprompt_pinentry);
+    wayprompt_pinentry.root_module.addImport("ini", ini);
     wayprompt_pinentry.root_module.addImport("fcft", fcft);
     wayprompt_pinentry.linkSystemLibrary("fcft");
     wayprompt_pinentry.root_module.addImport("xkbcommon", xkbcommon);
