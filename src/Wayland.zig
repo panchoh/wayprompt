@@ -217,6 +217,11 @@ const TextView = struct {
 };
 
 const Seat = struct {
+    const TouchPoint = struct {
+        id: i32,
+        hotspot: *HotSpot,
+    };
+
     w: *Wayland,
 
     wl_seat: *wl.Seat,
@@ -236,6 +241,10 @@ const Seat = struct {
     last_enter_serial: u32 = undefined,
     press_hotspot: ?*HotSpot = null,
 
+    // Touch related objects.
+    wl_touch: ?*wl.Touch = null,
+    touchpoints: std.TailQueue(TouchPoint) = .{},
+
     pub fn init(self: *Seat, w: *Wayland, wl_seat: *wl.Seat) !void {
         self.* = .{ .w = w, .wl_seat = wl_seat };
         self.wl_seat.setListener(*Seat, seatListener, self);
@@ -244,6 +253,7 @@ const Seat = struct {
     pub fn deinit(self: *Seat) void {
         self.releaseKeyboard();
         self.releasePointer();
+        self.releaseTouch();
         self.wl_seat.destroy();
     }
 
@@ -262,7 +272,11 @@ const Seat = struct {
                     self.releasePointer();
                 }
 
-                // TODO touch
+                if (ev.capabilities.touch) {
+                    self.bindTouch() catch {};
+                } else {
+                    self.releaseTouch();
+                }
             },
             .name => {}, // Do I look like I care?
         }
@@ -517,6 +531,93 @@ const Seat = struct {
             .leave => {},
             .repeat_info => {},
         }
+    }
+
+    fn bindTouch(seat: *Seat) !void {
+        if (seat.wl_touch != null) return;
+        debug.assert(seat.touchpoints.len == 0);
+        seat.wl_touch = try seat.wl_seat.getTouch();
+        seat.wl_touch.?.setListener(*Seat, touchListener, seat);
+    }
+
+    fn releaseTouch(seat: *Seat) void {
+        if (seat.wl_touch) |t| {
+            t.destroy();
+            seat.wl_touch = null;
+
+            var it = seat.touchpoints.first;
+            while (it) |node| {
+                // We need to get the next node before destroying the current one.
+                it = node.next;
+                seat.touchpoints.remove(node);
+                seat.w.config.alloc.destroy(node);
+            }
+        }
+    }
+
+    fn touchListener(_: *wl.Touch, event: wl.Touch.Event, seat: *Seat) void {
+        // It is possible that the server sends us more move events before we
+        // inform it of having closed the surface.
+        const surface: *Surface = &(seat.w.surface orelse return);
+        const alloc = seat.w.config.alloc;
+
+        switch (event) {
+            .down => |ev| {
+                const x = @as(u24, @intCast(math.clamp(ev.x.toInt(), 0, math.maxInt(i24))));
+                const y = @as(u24, @intCast(math.clamp(ev.y.toInt(), 0, math.maxInt(i24))));
+
+                // We can safely ignore a touch-down on a non-hotspot
+                // area.
+                const hotspot = surface.hotspotFromPoint(x, y) orelse return;
+
+                // Create new touch-point. This is necessary, because
+                // we want to activate hotspots on touch-up, which
+                // generally is better UX. We have a list of
+                // touchpoints instead of a single one so that we can
+                // support multi-touch operation.
+                const node = alloc.create(std.TailQueue(TouchPoint).Node) catch return;
+                node.data = .{
+                    .id = ev.id,
+                    .hotspot = hotspot,
+                };
+                seat.touchpoints.append(node);
+            },
+
+            .up => |ev| {
+                const node = seat.touchPointNodeFromId(ev.id) orelse return;
+                defer alloc.destroy(node);
+                seat.touchpoints.remove(node);
+                node.data.hotspot.act(seat.w);
+            },
+
+            .motion => |ev| {
+                // If the touchpoint has moved out of the hotspot, destroy it.
+                const x = @as(u24, @intCast(math.clamp(ev.x.toInt(), 0, math.maxInt(i24))));
+                const y = @as(u24, @intCast(math.clamp(ev.y.toInt(), 0, math.maxInt(i24))));
+
+                const node = seat.touchPointNodeFromId(ev.id) orelse return;
+                if (!node.data.hotspot.containsPoint(x, y)) {
+                    seat.touchpoints.remove(node);
+                    alloc.destroy(node);
+                }
+            },
+
+            // Our use case is simple enough that we don't need to
+            // care about frames.
+            .frame => {},
+            .cancel => {},
+            .shape => {},
+            .orientation => {},
+        }
+    }
+
+    fn touchPointNodeFromId(seat: *Seat, id: i32) ?*std.TailQueue(TouchPoint).Node {
+        debug.assert(seat.wl_touch != null);
+        var it = seat.touchpoints.first;
+        while (it) |node| : (it = node.next) {
+            if (node.data.id == id) return node;
+        }
+        return null;
     }
 };
 
