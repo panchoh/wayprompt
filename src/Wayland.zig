@@ -602,10 +602,21 @@ const Seat = struct {
                 }
             },
 
+            .cancel => {
+                // When the cancel event is sent, all touchpoints
+                // become invalid.
+                var it = seat.touchpoints.first;
+                while (it) |node| {
+                    // We need to get the next node before destroying the current one.
+                    it = node.next;
+                    seat.touchpoints.remove(node);
+                    alloc.destroy(node);
+                }
+            },
+
             // Our use case is simple enough that we don't need to
             // care about frames.
             .frame => {},
-            .cancel => {},
             .shape => {},
             .orientation => {},
         }
