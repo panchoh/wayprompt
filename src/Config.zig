@@ -214,7 +214,7 @@ fn getConfigPath(alloc: mem.Allocator) ![]const u8 {
             ".config/wayprompt/config.ini",
         });
     } else {
-        return try alloc.dupe(u8, "/etc/wayprompt/config.ini");
+        return try alloc.dupe(u8, "/etc/xdg/wayprompt/config.ini");
     }
 }
 
